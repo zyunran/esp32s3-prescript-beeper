@@ -80,6 +80,7 @@ static uint8_t mih_on = 0;            /* 1=时间加速中 */
 static time_t mih_base = 0;           /* 开启时刻真实 epoch */
 static uint32_t mih_ms = 0;           /* 开启时刻 esp_timer ms */
 static uint32_t mih_wx_last = 0;      /* 彩蛋天气刷新节流 ms */
+static uint32_t mih_draw_last = 0;    /* 彩蛋时间整屏重绘节流 ms(加速时秒变化远快于刷新率, 限流防总线/CPU 打满) */
 static uint8_t mih_confirm = 0;       /* 彩蛋确认乱码显示中(播完自动回主界面) */
 static uint32_t mih_hold_t = 0;       /* 确认定格计时 */
 static const char *const ui_week_name[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
@@ -92,6 +93,7 @@ static void mih_toggle(void)
         mih_base = time(NULL);
         mih_ms = (uint32_t)(esp_timer_get_time() / 1000);
         mih_wx_last = mih_ms;
+        mih_draw_last = mih_ms;
     }
 }
 
@@ -102,6 +104,9 @@ static void mih_toggle(void)
 static void egg_toggle(void)
 {
     UI_BoxModeSet(UI_BoxModeGet() ? 0 : 1);   /* 切换白框滤镜 */
+    /* 状态同步到主界面(与渲染出的主菜单一致): 否则白框下看着主菜单、实际仍在织机子菜单, 按键会脱节 */
+    ui_stack_n = 0;
+    ui_state = ST_MAIN;
     UI_RenderScreen();                        /* 立即全屏重绘(白框/恢复) */
 }
 
@@ -364,8 +369,9 @@ static void on_event(uint8_t evt)
                 uint8_t sel = UI_SubMenuCur();
                 const ui_menu_cfg_t *cfg = &ui_menu_cfg[sub_kind];
                 /* 退出项索引: 设置(组件)在末项; 自定义项在末项; 通用子菜单在 sub_count 项 */
-                uint8_t exit_idx;
-                if (cfg->fn == UI_FN_SETTING)    exit_idx = SET_SubmenuCount() - 1;
+                uint16_t exit_idx;
+                if (cfg->fn == UI_FN_SETTING)    /* 设置项为空时给不可能命中值, 防 SET_SubmenuCount()-1 下溢 */
+                    exit_idx = (SET_SubmenuCount() > 0) ? (uint16_t)(SET_SubmenuCount() - 1) : 0xFFFF;
                 else if (cfg->fn == UI_FN_SUBMENU) exit_idx = cfg->sub_count;
                 else                             exit_idx = cfg->item_count - 1;
                 if (sel == exit_idx)   /* 选"退出" -> 回主界面 */
@@ -792,14 +798,18 @@ static void ui_task(void *arg)
                 {
                     /* 彩蛋「纺织时间」: 现实1秒=显示1小时(3600显示秒), 时每1实秒+1、分每~16.7实秒+1、
                      * 秒每~0.28实秒+1、日期每~6.67实时滚1天 —— 时/分/秒/日同源于一个连续时间, 同步不脱节 */
-                    uint32_t el_ms = (uint32_t)(esp_timer_get_time() / 1000) - mih_ms;
+                    int64_t el_ms = (int64_t)(esp_timer_get_time() / 1000) - (int64_t)mih_ms;   /* int64: 防回绕大偏差 */
                     time_t dt = mih_base + (time_t)((uint64_t)el_ms * 3600 / 1000);  /* 连续显示秒 */
                     struct tm tmv;
                     char d[8], t[12];
                     localtime_r(&dt, &tmv);
                     snprintf(d, sizeof(d), "%02u-%02u", (uint8_t)(tmv.tm_mon + 1), (uint8_t)tmv.tm_mday);
                     snprintf(t, sizeof(t), "%02u:%02u:%02u", (uint8_t)tmv.tm_hour, (uint8_t)tmv.tm_min, (uint8_t)tmv.tm_sec);
-                    UI_TimeSet(d, t, ui_week_name[tmv.tm_wday]);   /* 彩蛋: 星期也随加速时间走 */
+                    if (now - mih_draw_last >= 200)  /* 加速时显示秒变化远快于刷新率: 限流到 ~5次/秒整屏重绘 */
+                    {
+                        mih_draw_last = now;
+                        UI_TimeSet(d, t, ui_week_name[tmv.tm_wday]);   /* 彩蛋: 星期也随加速时间走 */
+                    }
                     if (now - mih_wx_last >= 1200)   /* 天气每1.2秒跳一次 */
                     {
                         mih_wx_last = now;

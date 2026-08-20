@@ -268,20 +268,28 @@ static void ins_scr_parse(const char *text)
         else                                            /* 普通字符 */
         {
             char ch[4] = {0};
-            uint8_t len, w;
+            uint8_t len = 1, w;
             if (text[i] & 0x80)
             {
-                len = 3;
                 ch[0] = text[i];
-                if (text[i + 1] == '\0') { break; }   /* 截断 UTF-8: 停止, 防画半个字 */
-                ch[1] = text[i + 1];
-                if (text[i + 2] == '\0') { break; }
-                ch[2] = text[i + 2];
                 w = ins_font_h();
+                if ((text[i] & 0xE0) == 0xC0)                 /* 2 字节 UTF-8(如 · 、 Ö): 此前一律按 3 字节会错位 */
+                {
+                    if (text[i + 1] == '\0') break;           /* 截断 UTF-8: 停止, 防画半个字 */
+                    len = 2;
+                    ch[1] = text[i + 1];
+                }
+                else if ((text[i] & 0xE0) == 0xE0)            /* 3 字节 UTF-8(CJK 汉字) */
+                {
+                    if (text[i + 1] == '\0' || text[i + 2] == '\0') break;
+                    len = 3;
+                    ch[1] = text[i + 1];
+                    ch[2] = text[i + 2];
+                }
+                else break;                                   /* 非法/孤立首字节: 停止, 不画半个字 */
             }
             else
             {
-                len = 1;
                 ch[0] = text[i];
                 w = (uint8_t)(ins_font_h() / 2);
             }

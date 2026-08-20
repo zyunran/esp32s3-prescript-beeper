@@ -8,6 +8,7 @@
 #include "UI.h"
 #include "nvs_flash.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -30,13 +31,14 @@ static const char *todo_item_p[TODO_MAX + 1];
 static void todo_item_fill(uint8_t i, char *out, size_t outsz);   /* 前置声明(定义在下文) */
 
 /* ================= NVS 持久化 ================= */
+static const char *TAG = "TODO";
 static void todo_save(void)
 {
     nvs_handle_t h;
     if (nvs_open("todo", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_blob(h, "todo", todo, sizeof(todo));
-        nvs_commit(h);
+        if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "todo nvs commit failed");
         nvs_close(h);
     }
 }

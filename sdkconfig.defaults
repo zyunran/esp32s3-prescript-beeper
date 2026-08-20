@@ -1,3 +1,6 @@
+# 目标芯片: ESP32-S3(必须显式声明! 默认 IDF 目标是 esp32, 拷贝/全新 clone 不自带 sdkconfig 时会被编成 esp32)
+CONFIG_IDF_TARGET="esp32s3"
+
 # 分区表: 自定义(partitions.csv, app 4MB). 详见 sdkconfig
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

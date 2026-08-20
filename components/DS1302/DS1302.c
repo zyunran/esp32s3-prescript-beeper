@@ -150,7 +150,7 @@ void DS1302_Write(const struct tm *t)
     buf[2] = rtc_u2bcd((uint8_t)t->tm_hour);
     buf[3] = rtc_u2bcd((uint8_t)t->tm_mday);
     buf[4] = rtc_u2bcd((uint8_t)(t->tm_mon + 1));
-    buf[5] = rtc_u2bcd((uint8_t)(t->tm_wday ? t->tm_wday : 7));        /* 周日=7, 本机不用 */
+    buf[5] = rtc_u2bcd((uint8_t)(t->tm_wday + 1));                      /* tm_wday 0=周日..6=周六 -> DS1302 星期 1=周日..7=周六 */
     buf[6] = rtc_u2bcd((uint8_t)(t->tm_year % 100));
     buf[7] = 0x00;                /* WP 保持关闭, 下次直接可写 */
 

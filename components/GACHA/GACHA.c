@@ -622,7 +622,7 @@ static uint8_t coin_split(const char *s, int16_t maxw, const char **l1, const ch
 
     while (*p && pos < (uint8_t)(sizeof(coin_nbuf[0]) - 4))
     {
-        uint8_t len = (*p & 0x80) ? 3 : 1;
+        uint8_t len = gacha_utf8_len(p);     /* 兼容 2/3 字节 UTF-8(Ö/西里尔/·等), 之前一律3字节会错位 */
         int16_t cw = (*p & 0x80) ? 16 : 8;
         if (pos > 0 && w + cw > maxw)
         {
@@ -772,6 +772,7 @@ static void gacha_show_skills(uint8_t sinner)
     for (k = coin_sinner_off[sinner]; k < coin_sinner_off[sinner + 1]; k++)
     {
         if (!coin_owned[k]) continue;
+        if (n >= (uint8_t)(COIN_MAX_PER - 2)) break;   /* 预留"随机/退出"两槽, 防越界 */
         avail_skills[n] = k;
         snprintf(coin_sel_buf[n], sizeof(coin_sel_buf[0]), "%s %d",
                  coin_skills[k].name, (int)coin_skill_max(k));

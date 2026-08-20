@@ -10,10 +10,13 @@
 #include "GACHA.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+
+static const char *TAG = "SET";
 
 static uint16_t set_timeout_sec = 60;
 static uint8_t  set_vol = 100;
@@ -60,7 +63,7 @@ static void settings_save(void)
         nvs_set_u8(h, "on", set_oracle_n);
         nvs_set_u8(h, "ow", set_oracle_win);
         nvs_set_u8(h, "cur", set_cursor);
-        nvs_commit(h);
+        if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "settings nvs commit failed");
         nvs_close(h);
     }
 }
@@ -105,7 +108,7 @@ void SET_Init(void)
         nvs_get_u32(h, "boot", &set_boot_count);
         set_boot_count++;
         nvs_set_u32(h, "boot", set_boot_count);
-        nvs_commit(h);
+        if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "boot count nvs commit failed");
         nvs_close(h);
     }
 }

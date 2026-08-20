@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -100,13 +101,14 @@ static uint32_t alm_today(void)
 }
 
 /* ================= NVS 持久化 ================= */
+static const char *TAG = "ALM";
 static void alm_save(void)
 {
     nvs_handle_t h;
     if (nvs_open("alarm", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_blob(h, "alm", alm, sizeof(alm));
-        nvs_commit(h);
+        if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "alarm nvs commit failed");
         nvs_close(h);
     }
 }

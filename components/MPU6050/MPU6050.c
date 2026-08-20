@@ -194,7 +194,7 @@ static uint8_t mpu_burst(uint8_t reg, uint8_t *buf, uint8_t n)
 }
 
 /* ================= 初始化 / 探活 ================= */
-static uint8_t mpu_ok = 0;
+static volatile uint8_t mpu_ok = 0;   /* 采样任务写, UI/平衡页跨任务读(volatile 防缓存旧值) */
 
 /* 探测从机地址(0x68=AD0低, 0x69=AD0高)并用 WHO_AM_I 校验 */
 static uint8_t mpu_probe_addr(void)

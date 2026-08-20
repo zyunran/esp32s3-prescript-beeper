@@ -18,6 +18,7 @@ static uint16_t tim_set_min;      /* 设定分钟 1..TIMER_MAX_MIN */
 static uint32_t tim_start;        /* 倒计时开始时刻 ms */
 static uint32_t tim_dur;          /* 倒计时总时长 ms */
 static uint32_t tim_last_sec;     /* 上次显示秒 */
+static uint32_t tim_fast_ms;      /* 快进累计补偿 ms(避免直接改 tim_start 造成下溢) */
 static uint32_t tim_anim_start;   /* 角光标扩散动画开始时刻 */
 static int16_t  tim_corner_exp;   /* 角光标扩散量(0=收缩) */
 static int16_t  tim_slide;        /* 滑动条动画偏移(0=静止) */
@@ -31,6 +32,12 @@ static uint8_t  tim_exit_req;     /* 1=请求退出(OK 长按), 下次 Tick 返�
 static uint32_t tim_now(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* 剩余时长 ms(含快进补偿; int64 避免下溢/回绕) */
+static int64_t tim_remain(void)
+{
+    return (int64_t)tim_dur - ((int64_t)(tim_now() - tim_start) + tim_fast_ms);
 }
 
 /* ---- 绘制小工具 ---- */
@@ -220,7 +227,8 @@ static void tim_render_set_confirm(void)
 /* 倒计时显示: 标题不变, 中间 M:SS 正常字号, 角光标左右扩大框住时间 */
 static void tim_render_count(void)
 {
-    uint32_t remain = (tim_dur > (tim_now() - tim_start)) ? (tim_dur - (tim_now() - tim_start)) : 0;
+    int64_t rem = tim_remain();
+    uint32_t remain = (rem > 0) ? (uint32_t)rem : 0;
     uint32_t sec = remain / 1000;
     char buf[16];
     int16_t cx = LCD_WIDTH / 2;
@@ -262,6 +270,7 @@ void TIM_Enter(void)
     tim_corner_exp = 0;
     tim_slide = 0;
     tim_anim_start = 0;
+    tim_fast_ms = 0;
     tim_exit_req = 0;
     tim_title_start("你想到达几分钟后的未来?");   /* 标题乱码破译 */
     tim_render_set();
@@ -366,6 +375,7 @@ tim_ret_t TIM_Tick(uint8_t render)
             {
                 tim_ph = PH_COUNT;
                 tim_start = now;
+                tim_fast_ms = 0;
                 tim_dur = (uint32_t)tim_set_min * 60000;
                 tim_last_sec = 0xFFFFFFFF;   /* 强制先显示 */
                 if (render) tim_render_count();
@@ -374,15 +384,14 @@ tim_ret_t TIM_Tick(uint8_t render)
 
         case PH_COUNT:
         {
-            int32_t remain = (int32_t)tim_dur - (int32_t)(now - tim_start);
-            if (remain <= 0)          /* 自然归零: 到达画面 + 蜂鸣提示 */
+            if (tim_remain() <= 0)    /* 自然归零: 到达画面 + 蜂鸣提示 */
             {
                 tim_show_done(render);
                 return TIM_DONE;
             }
             if (render)               /* 熄屏不重绘; 亮屏后 last_sec 已过期会强制刷新 */
             {
-                uint32_t sec = (uint32_t)(remain / 1000);
+                uint32_t sec = (uint32_t)(tim_remain() / 1000);
                 if (sec != tim_last_sec)
                 {
                     tim_last_sec = sec;
@@ -393,12 +402,12 @@ tim_ret_t TIM_Tick(uint8_t render)
         }
 
         case PH_FAST:
-            /* 快进: 每 10ms 减少 5 秒剩余(500x), 归零进到达画面(不蜂鸣) */
+            /* 快进: 每 10ms 补偿 5 秒剩余(500x), 归零进到达画面(不蜂鸣) */
             if (now - tim_fast_last >= 10)
             {
                 tim_fast_last = now;
-                tim_start -= 5000;
-                if ((int32_t)tim_dur - (int32_t)(now - tim_start) <= 0)
+                tim_fast_ms += 5000;
+                if (tim_remain() <= 0)
                 {
                     tim_show_done(render);   /* 快进归零: 同样显示到达消息, 但不返回 TIM_DONE(不蜂鸣) */
                     return TIM_RUN;

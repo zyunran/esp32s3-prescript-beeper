@@ -27,7 +27,7 @@ extern const unsigned char ascii_1608[][16];
 /* 文字像素宽(定义于通用菜单渲染节, 此处前置声明供 ScrText 等早段使用) */
 static int16_t ui_text_width(const char *s);
 static int16_t ui_menu_item_x(const char *s, int16_t xoff);
-static uint8_t ui_sub_center;   /* 子菜单居中标志(定义于子菜单节, 前置声明供菜单渲染使用) */
+static uint8_t ui_sub_center;   /* 子菜单居中标志(0=右对齐 1=逐项居中 2=块左对齐以最长项居中), 定义于此供菜单渲染使用 */
 
 /* 界面/动画可调参数定义在 ui.h 的"界面可调参数"节, 改那里即可 */
 #define MENU_MID        (UI_MENU_Y1 + 8)   /* 选中行中心线(派生) */
@@ -918,19 +918,26 @@ static int ui_is_current(int16_t y)
     return (y <= MENU_MID && MENU_MID <= y + 15);
 }
 
-/* 文字像素宽(中文16 / ASCII8) */
+/* 文字像素宽(中文16 / ASCII8); 兼容 2/3 字节 UTF-8, 截断/孤立首字节也不回跳出缓冲 */
 static int16_t ui_text_width(const char *s)
 {
     int16_t w = 0;
-    while (*s)
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p)
     {
-        if (*s & 0x80)
+        if (*p & 0x80)
         {
-            w += 16; s += 3;
+            uint8_t len = 1;
+            if ((*p & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) len = 2;
+            else if ((*p & 0xE0) == 0xE0 && (p[1] & 0xC0) == 0x80
+                     && (p[2] & 0xC0) == 0x80) len = 3;
+            w += 16;
+            p += len;
         }
         else
         {
-            w += 8; s += 1;
+            w += 8;
+            p += 1;
         }
     }
     return w;
@@ -1176,7 +1183,6 @@ void UI_FullScreen(const char *line1, const char *line2)
 static char ui_sub_items[24][48];         /* 子项文字缓冲(最多 23 子项 + 退出; 48B 容纳长人格名+数值) */
 static const char *ui_sub_items_p[24];    /* 指针数组(通用渲染需要) */
 static uint8_t ui_sub_nitems, ui_sub_cur;
-static uint8_t ui_sub_center;             /* 0=右对齐 1=逐项居中 2=块左对齐(全体同x, 以最长项居中) */
 static int16_t ui_sub_center_x;           /* 模式2的公共左对齐 x */
 static int16_t ui_sub_center_dx = 0;      /* 模式2整体右移量 px(默认0) */
 /* sub_xoff 已在主界面菜单节定义 */

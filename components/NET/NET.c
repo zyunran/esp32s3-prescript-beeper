@@ -60,6 +60,7 @@ static uint8_t net_started = 0;   /* 已开始联网(幂等) */
 static uint8_t  net_ap_client = 0;           /* 1=有手机连着热点 */
 static uint8_t  net_ap_timeout_task_run = 0; /* 超时检查任务是否在跑 */
 static uint32_t net_ap_open_ms = 0;          /* 热点开启时刻(esp_timer ms) */
+static TaskHandle_t net_dns_task_h = NULL;   /* captive portal DNS 任务句柄(仅热点开启时运行) */
 
 /* ================= 天气状态 ================= */
 typedef struct {
@@ -188,11 +189,15 @@ static void net_weather_parse(const char *json)
 static void net_weather_fetch(void)
 {
     char url[220];
+    char city[24], key[48];          /* 快照: 防拉取中途 net_city/net_key 被网页改动造成半新旧混合 */
     esp_http_client_config_t cfg;
     esp_http_client_handle_t cli;
     esp_err_t err;
 
-    if (net_key[0] == '\0')          /* 天气私钥未配置: 跳过，防无效请求 */
+    strncpy(city, net_city, sizeof(city) - 1); city[sizeof(city) - 1] = '\0';
+    strncpy(key, net_key, sizeof(key) - 1);    key[sizeof(key) - 1] = '\0';
+
+    if (key[0] == '\0')              /* 天气私钥未配置: 跳过，防无效请求 */
     {
         ESP_LOGW(TAG, "weather key 未配置, 跳过拉取(网页填写后生效)");
         return;
@@ -206,7 +211,7 @@ static void net_weather_fetch(void)
     snprintf(url, sizeof(url),
              "https://api.seniverse.com/v3/weather/daily.json"
              "?key=%s&location=%s&language=zh-Hans&unit=c&start=0&days=3",
-             net_key, net_city);
+             key, city);
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.url = url;
@@ -308,6 +313,7 @@ static void net_ap_timeout_task(void *arg)
         esp_wifi_start();
         net_tx_power();
         net_ap_timeout_task_run = 0;
+        if (net_dns_task_h) { vTaskDelete(net_dns_task_h); net_dns_task_h = NULL; }   /* DNS 随超时关热点一起停 */
         break;
     }
     vTaskDelete(NULL);
@@ -496,8 +502,12 @@ void NET_Init(void)
     wifi_config_t wcfg = {0};
     if (net_cfg_valid)
     {
-        memcpy(wcfg.sta.ssid, net_ssid, strnlen(net_ssid, sizeof(wcfg.sta.ssid)));
-        memcpy(wcfg.sta.password, net_pass, strnlen(net_pass, sizeof(wcfg.sta.password)));
+        size_t sl = strnlen(net_ssid, sizeof(wcfg.sta.ssid) - 1);
+        memcpy(wcfg.sta.ssid, net_ssid, sl);
+        wcfg.sta.ssid[sl] = '\0';                     /* 满长也确保 NUL, 防 WiFi 库 strlen 越界 */
+        size_t pl = strnlen(net_pass, sizeof(wcfg.sta.password) - 1);
+        memcpy(wcfg.sta.password, net_pass, pl);
+        wcfg.sta.password[pl] = '\0';
     }
 
     /* 默认纯 STA(不开配网热点, 省电/隐私); 配网靠 联网->开启配网 手动开热点 */
@@ -507,9 +517,9 @@ void NET_Init(void)
     net_sntp_init();
     esp_wifi_start();
     net_tx_power();                  /* 统一发射功率 8dBm(降温省电, 见 net_tx_power) */
-    xTaskCreate(net_dns_task, "dns", 3072, NULL, 1, NULL);   /* captive portal: 域名->192.168.4.1(开启配网时生效) */
     net_started = 1;
-    ESP_LOGI(TAG, "NET STA: %s (配网热点需 联网->开启配网 手动开启)", net_cfg_valid ? net_ssid : "(未配置)");
+    /* DNS(captive portal)不在初始化时启动: 只有手动开启配网热点后才运行, 纯 STA 不占 UDP53/不应答 */
+    ESP_LOGI(TAG, "NET STA registered (saved=%d, 配网热点需 联网->开启配网 手动开启)", (int)net_cfg_valid);
 }
 
 /* 开启配网: 手动开/关配网热点(纯 STA <-> AP+STA), 返回 1=已开 0=已关 */
@@ -524,6 +534,7 @@ uint8_t NET_ApToggle(void)
         esp_wifi_start();
         net_tx_power();
         net_ap_client = 0;   /* 复位客户端状态 */
+        if (net_dns_task_h) { vTaskDelete(net_dns_task_h); net_dns_task_h = NULL; }   /* DNS 随热点关闭 */
         ESP_LOGI(TAG, "AP off -> STA only");
         return 0;
     }
@@ -541,12 +552,16 @@ uint8_t NET_ApToggle(void)
         esp_wifi_start();
         net_tx_power();   /* 开热点后重设功率(防 stop/start 重置回 20dBm) */
         net_ap_open_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (!net_dns_task_h)
+        {
+            xTaskCreate(net_dns_task, "dns", 3072, NULL, 1, &net_dns_task_h);  /* captive portal 随热点启动 */
+        }
         if (!net_ap_timeout_task_run)
         {
             net_ap_timeout_task_run = 1;
             xTaskCreate(net_ap_timeout_task, "ap_tmo", 3072, NULL, 1, NULL);
         }
-        ESP_LOGI(TAG, "AP on: %s pwd=%s (192.168.4.1)", NET_AP_SSID, NET_AP_PASSWORD);
+        ESP_LOGI(TAG, "AP on: %s (192.168.4.1)", NET_AP_SSID);
         return 1;
     }
 }
@@ -568,7 +583,7 @@ static void net_reconnect_task(void *arg)
     if (net_ssid[0])
     {
         esp_wifi_connect();
-        ESP_LOGI(TAG, "Connecting to WiFi: %s ...", net_ssid);
+        ESP_LOGI(TAG, "reconnect: connecting to saved WiFi (SSID hidden for privacy)");
     }
     vTaskDelete(NULL);
 }
@@ -585,8 +600,14 @@ void NET_SetWifi(const char *ssid, const char *pass)
     net_cfg_save();
 
     wifi_config_t wcfg = {0};
-    memcpy(wcfg.sta.ssid, net_ssid, strnlen(net_ssid, sizeof(wcfg.sta.ssid)));
-    memcpy(wcfg.sta.password, net_pass, strnlen(net_pass, sizeof(wcfg.sta.password)));
+    {
+        size_t sl = strnlen(net_ssid, sizeof(wcfg.sta.ssid) - 1);
+        memcpy(wcfg.sta.ssid, net_ssid, sl);
+        wcfg.sta.ssid[sl] = '\0';                     /* 满长也确保 NUL, 防 WiFi 库 strlen 越界 */
+        size_t pl = strnlen(net_pass, sizeof(wcfg.sta.password) - 1);
+        memcpy(wcfg.sta.password, net_pass, pl);
+        wcfg.sta.password[pl] = '\0';
+    }
 
     if (net_started)
     {
@@ -656,7 +677,7 @@ uint8_t NET_ScanWifi(uint8_t max, char ssids[][33], int8_t rssi[], uint8_t enc[]
     {
         for (i = 0; i < num; i++)
         {
-            snprintf(ssids[i], 33, "%s", ap[i].ssid);
+            snprintf(ssids[i], 33, "%.32s", ap[i].ssid);   /* %s 可能读到未 NUL 结尾的 32B ssid 越界; %.32s 限制 */
             rssi[i] = ap[i].rssi;
             enc[i] = (ap[i].authmode == WIFI_AUTH_OPEN) ? 0 : 1;
         }

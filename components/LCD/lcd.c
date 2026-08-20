@@ -130,7 +130,10 @@ void lcd_init(void)
     spidevice_structure.mode = 0;
     spidevice_structure.queue_size = 7;
     spidevice_structure.spics_io_num = GPIO_NUM_9;
-    spi_bus_add_device(SPI2_HOST, &spidevice_structure, &spi2_handle);
+    if (spi_bus_add_device(SPI2_HOST, &spidevice_structure, &spi2_handle) != ESP_OK)
+    {
+        spi2_handle = NULL;   /* 添加失败: 置空句柄, 使后续写屏显式失效而非崩溃 */
+    }
 
     gpio_config_t gpio_init_struct;
         /* WR管脚 */
