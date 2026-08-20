@@ -93,3 +93,6 @@ Desktop.ini
 *.pfx
 .env
 .env.*
+
+# 构建日志(esp32_idf.py 输出)
+build_out.txt

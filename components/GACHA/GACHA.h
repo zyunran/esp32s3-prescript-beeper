@@ -54,7 +54,7 @@ typedef struct {
 #define GACHA_COLOR_LINE  UI_COLOR_ICON    /* 扫描线(柔和青) */
 
 /* ================= API(非阻塞, 由 RTOS 主任务驱动) =================
- * 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN 一致: 1=上 2=确认 3=下
+ * 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN/EVT_LONG_OK 一致: 1=上 2=确认 3=下 4=OK长按
  * 流程: Enter 渲染"十连/拼点/单抽/积分/图鉴/退出"子菜单 -> OnEvent 选十连进动画
  *       -> Tick 推进扫描/语音/结果滚动 -> 结果确认回子菜单, 子菜单"退出"回主界面 */
 void    GACHA_Enter(void);       /* 进入抽卡界面(渲染子菜单) */
