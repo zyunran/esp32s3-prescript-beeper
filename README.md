@@ -4,7 +4,7 @@
 
 - 平台：ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C
 - 闪存：16MB（app 分区 4MB，未启用 OTA）
-- 大部分代码基于vebcoding并不稳定,等待重构
+- 大部分代码基于vibe coding并不稳定,等待重构
 ---
 
 ## 功能
