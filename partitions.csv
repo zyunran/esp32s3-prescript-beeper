@@ -1,0 +1,5 @@
+# 自定义分区表: app 分区 4MB(默认 singleapp 仅 1MB, 加 WiFi/抽卡后不够)
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x400000,

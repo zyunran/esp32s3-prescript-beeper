@@ -1,0 +1,12 @@
+set(srcs
+        MPU6050.c)
+
+set(include_dirs
+        .)
+
+set(requires
+        UI driver esp_rom esp_timer freertos)
+
+idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
+
+component_compile_options(-ffast-math -O3 -Wno-error=format -Wno-format)

@@ -1,0 +1,7 @@
+# 分区表: 自定义(partitions.csv, app 4MB). 详见 sdkconfig
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# SNTP: 3 个服务器槽位(国内 NTP 可靠), 校时失败 10 分钟重试(默认 1 小时太久)
+CONFIG_LWIP_SNTP_MAX_SERVERS=3
+CONFIG_LWIP_SNTP_UPDATE_DELAY=600000
