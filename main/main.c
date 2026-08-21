@@ -1,7 +1,8 @@
 /* RTOS 多任务架构:
  *  - input_task: GPIO 沿检测读按键 -> 事件队列(高优先级, 独立于界面)
  *  - ui_task:    收事件按界面状态机驱动, 并推进各功能(破译/抽卡/计时/神谕推送)
- *  - 待机: 息屏后 ui_task 进浅睡眠(200ms tick 查按键/闹钟), 唤醒后 WiFi 后台重连(见 standby_enter)
+ *  - 待机: 息屏后 ui_task 进浅睡眠(50ms tick 查按键/闹钟, STANDBY_TICK_US);
+ *    路径1 完全按需联网: 唤醒不再自动重连 WiFi, 联网仅由 联网->连接网络 手动开启(会话内校时/天气)
  * 功能已拆分为组件: UI(菜单/配置) / INSTRUCTION(破译+蜂鸣) / GACHA(抽卡) / NET(联网天气)
  *   / SOUND(音频) / SETTING(设置+NVS) / TIMER(计时/倒计时) / ORACLE(随机神谕推送)
  * 主菜单标题与子菜单项文字集中配置于 ui_menu_cfg(ui.c), 改那里即可改文字
@@ -37,7 +38,8 @@
 #include <time.h>
 #include <sys/time.h>
 
-/* ================= 按键事件 ================= */
+/* ================= 按键事件 =================
+ * 注: 长按 OK=返回上一级; 连发参数改这里即可调整手感 */
 #define EVT_NONE     0
 #define EVT_UP       1
 #define EVT_OK       2
@@ -49,6 +51,10 @@
  *   REPEAT_PRESS_MS = 长按连发间隔(上下键按住后每隔此时间滚动一项) */
 #define LONG_PRESS_MS   600
 #define REPEAT_PRESS_MS 150
+
+/* 路径1 联网会话空闲超时(ms): 连网后按键/网页(NET_Touch)都静默超此时长 -> 自动断(省电+缩暴露面).
+ * 手动断开: 再按 联网->连接网络(乱码显示"已断开网络"). 网页只读不操作也超时, 属预期. */
+#define NET_SESSION_IDLE_MS  60000
 
 /* ================= 界面状态机 ================= */
 typedef enum { ST_MAIN, ST_SUB, ST_INS, ST_GACHA, ST_TIMER, ST_ALARM, ST_INFO, ST_TODO, ST_MPU, ST_ASK } ui_state_t;
@@ -378,9 +384,16 @@ static void on_event(uint8_t evt)
                 {
                     ui_pop();
                 }
-                else if (cfg->fn == UI_FN_NET && sel == UI_NET_CONNECT)  /* 联网-连接网络(校时+拉天气) */
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_CONNECT)  /* 联网-连接/断开(联网会话开关) */
                 {
-                    if (!NET_GetSsid()[0])   /* 从未配过 WiFi(纯 AP 配网模式): 就地提示, 不再静默 */
+                    if (NET_WifiOk())   /* 已在网: 再按 = 主动断开会话(路径1 手动按需断) */
+                    {
+                        wifi_ip_pending = 0;                /* 取消"连上自动显IP"挂起 */
+                        NET_SessionEnd();
+                        INS_Show("已断开网络");              /* 乱码破译显示, 任意键返回 */
+                        ui_push(ST_INS);
+                    }
+                    else if (!NET_GetSsid()[0])   /* 从未配过 WiFi(纯 AP 配网模式): 就地提示, 不再静默 */
                     {
                         UI_FullScreen("未配置WiFi", "先 开启配网 再连手机设WiFi");
                         ui_push(ST_INFO);                    /* 任意键回联网子菜单 */
@@ -590,8 +603,8 @@ static void on_event(uint8_t evt)
  * 息屏(背光灭)后进浅睡眠, CPU 停/RAM 保留/毫秒级唤醒, 系统时间由 RTC 维持不丢.
  * 注: 本板 GPIO 唤醒(EXT1/GPIO wakeup)触发硬件睡眠拒绝(ESP_ERR_SLEEP_REJECT, 实测),
  *     故用「定时器 tick 睡眠」: 每 50ms 睡一片, 醒来查按键/闹钟再睡.
- *     按键响应 ≤50ms; CPU 睡眠期占 >99%, 仍比全速运行省电数倍.
- * 待机关 WiFi(最省电); 唤醒后 WiFi 由独立小任务后台重连(不阻塞亮屏), 校时写回 DS1302.
+ *     按键响应 ≤50ms; CPU 睡眠期占 >99%, 比全速运行省电数倍.
+ * 待机关 WiFi(最省电); 路径1 唤醒后也不再自动重连(按需联网), 校时在联网会话内完成.
  * 白屏防护: 睡眠期间 LCD 的 CS/RST/DC 保持输出高(lcd_sleep_hold), 防屏复位/吃毛刺. */
 #define STANDBY_TICK_US  50000ULL    /* 定时唤醒片长: 50ms(按键响应≤50ms, 与功耗折中; 原200ms唤醒偏慢) */
 
@@ -604,13 +617,6 @@ static uint8_t standby_btn_pressed(void)
     return (gpio_get_level(UI_KEY_UP) == 0) ||
            (gpio_get_level(UI_KEY_OK) == 0) ||
            (gpio_get_level(UI_KEY_DOWN) == 0);
-}
-
-/* 唤醒后后台重启 WiFi + 立即校时(esp_wifi_start 较慢, 放独立小任务不阻塞亮屏) */
-static void standby_wifi_task(void *arg)
-{
-    NET_WifiStart();
-    vTaskDelete(NULL);
 }
 
 static void standby_enter(void)
@@ -635,7 +641,7 @@ static void standby_enter(void)
     MPU_Resume();                                  /* 恢复六轴采样 */
     if (input_task_h) vTaskResume(input_task_h);   /* 恢复按键轮询(唤醒按键事件随之入队) */
     printf("[STBY] wake %s\n", alarm ? "alarm" : "btn");
-    xTaskCreate(standby_wifi_task, "stbywifi", 4096, NULL, 1, NULL);   /* WiFi 后台重连, 不阻塞 */
+    /* 路径1 完全按需: 唤醒不再自动重连 WiFi(省电+零暴露面). 需要联网时用户按 联网->连接网络 */
     if (alarm)
     {
         uint32_t nw = (uint32_t)(esp_timer_get_time() / 1000);
@@ -767,6 +773,14 @@ static void ui_task(void *arg)
             {
                 on_event(evt);
             }
+        }
+
+        /* 按需联网会话(路径1): 已连网但按键/网页都静默超时 -> 自动断(省电+缩暴露面).
+         * 手动断: 再按 联网->连接网络. 按键和网页请求(NET_Touch)都会续期, 正常使用不误断. */
+        if (NET_WifiOk() && (now - last_act) >= NET_SESSION_IDLE_MS &&
+            NET_SessionIdleMs() >= NET_SESSION_IDLE_MS)
+        {
+            NET_SessionEnd();
         }
 
         /* 倒计时: 无论亮屏与否都推进(render=亮屏才重绘, 熄屏省电);

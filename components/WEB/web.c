@@ -1,4 +1,6 @@
 /* WEB 组件: 内嵌配置页 + REST API
+ * 路径1 完全按需: httpd 静态常驻, 但射频平时关闭, 实际可达窗口 = 联网会话 / 配网热点期间
+ * (会话空闲超时/手动断/待机即射频停, 此时本服务不可达)。每个请求都 NET_Touch() 续期会话。
  * 联网后手机/PC 浏览器访问 http://<esp32-ip>/ 打开配置页, 可:
  *   - 增删改指令库(每行一条, 支持 {#RRGGBB}/{} {RAND:1-10} {TIMER})
  *   - 设置闹钟(每天重复/按星期/一次性, 最多 3 个) / 待办管理
@@ -326,6 +328,7 @@ static const char web_page[] =
 
 static esp_err_t web_handler_root(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期: 网页活动=联网会话活跃, 防空闲自动断误判(路径1) */
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, web_page, HTTPD_RESP_USE_STRLEN);
 }
@@ -333,6 +336,7 @@ static esp_err_t web_handler_root(httpd_req_t *req)
 /* GET /api/cfg */
 static esp_err_t web_api_cfg_get(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     cJSON *root = cJSON_CreateObject();
     cJSON *colors = cJSON_CreateObject();
     cJSON *ins = cJSON_CreateArray();
@@ -825,6 +829,7 @@ static int web_cfg_validate(cJSON *root)
 
 static esp_err_t web_api_cfg_post(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     int total = req->content_len, recvd = 0;
     char *buf;
 
@@ -890,6 +895,7 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
 /* 扫描附近 WiFi(供配置页点击选择, 免手输 SSID) */
 static esp_err_t web_api_scan(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     enum { SCAN_MAX = 20 };
     char ssids[SCAN_MAX][33];
     int8_t rssi[SCAN_MAX];
@@ -916,6 +922,7 @@ static esp_err_t web_api_scan(httpd_req_t *req)
 /* 抽卡图鉴: 按罪人分组返回全部人格与已抽标记(★=已抽), 供网页图鉴展示 */
 static esp_err_t web_api_gacha(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     uint8_t s, n = GACHA_CoinSinnerN();
     uint16_t total = GACHA_CoinTotal();
     cJSON *root = cJSON_CreateObject();
@@ -954,6 +961,7 @@ static esp_err_t web_api_gacha(httpd_req_t *req)
 /* 设备状态(网页状态页): 电量/堆/开机次数/IP/WiFi/时间/天气 */
 static esp_err_t web_api_status(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     uint8_t pct = BAT_GetPct();
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "battery", (pct <= 100) ? pct : -1);
@@ -976,6 +984,7 @@ static esp_err_t web_api_status(httpd_req_t *req)
 /* 待办列表: 返回 {todos:[{text,done},...]} */
 static esp_err_t web_api_todo_get(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     uint8_t n = TODO_Count(), i;
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "todos");
@@ -997,6 +1006,7 @@ static esp_err_t web_api_todo_get(httpd_req_t *req)
 /* 待办操作: {op:"add",text} | {op:"toggle",idx} | {op:"del",idx} | {op:"clear"} */
 static esp_err_t web_api_todo_post(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     int total = req->content_len, recvd = 0;
     char *buf;
     cJSON *root, *op, *text, *idx;
@@ -1098,6 +1108,7 @@ static portMUX_TYPE web_mux = portMUX_INITIALIZER_UNLOCKED;
 /* POST /api/send: 接收 {cmd:"..."} 缓存, 由 ui_task 取出用乱码破译显示 */
 static esp_err_t web_api_send(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     int total = req->content_len, recvd = 0;
     char *buf;
     cJSON *root, *cmd;
@@ -1172,6 +1183,7 @@ uint8_t WEB_TakeCmd(char *buf, size_t n)
 /* 试响: 蜂鸣器响一下(验证蜂鸣/音量) */
 static esp_err_t web_api_beep(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     INS_BeepTimes(1);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -1181,6 +1193,7 @@ static esp_err_t web_api_beep(httpd_req_t *req)
 /* 重启设备 */
 static esp_err_t web_api_reboot(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
     vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -1191,6 +1204,7 @@ static esp_err_t web_api_reboot(httpd_req_t *req)
 /* 添加使用者(网页端「添加」按钮): 收 {name}, 加入列表并持久化(NVS, 同指令库模式) */
 static esp_err_t web_api_user_add(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     int total = req->content_len, recvd = 0;
     char *buf;
     if (total <= 0 || total > 512)
@@ -1233,6 +1247,7 @@ static esp_err_t web_api_user_add(httpd_req_t *req)
 /* 清除已存 WiFi: 回纯 AP 配网模式(配置页"清除"按钮) */
 static esp_err_t web_api_clearwifi(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     NET_ClearWifi();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -1242,6 +1257,7 @@ static esp_err_t web_api_clearwifi(httpd_req_t *req)
 /* 手机连上热点的 captive portal 探测路径 -> 直接返回配置页(自动弹出, 免手输IP) */
 static esp_err_t web_captive(httpd_req_t *req)
 {
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     httpd_resp_set_type(req, "text/html");
     httpd_resp_sendstr(req, web_page);
     return ESP_OK;

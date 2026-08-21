@@ -1,7 +1,9 @@
-/* NET 组件: WiFi STA 联网 + SNTP 校时 + 心知天气 3 日预报
- *  - "联网"子菜单手动触发联网(NET_Connect), 断连自动重连
- *  - 时间有效(SNTP 校时或 DS1302 上电采用)后, 主页面左侧显示由 UI 组件负责
- *  - 拿到 IP 后自动后台拉取 3 日天气, 今日天气显示在时钟下方(UI 组件)
+/* NET 组件: WiFi STA 联网 + SNTP 校时 + 心知天气 3 日预报(路径1: 完全按需、离线优先)
+ *  - 射频默认关闭: 只有 联网->连接网络(NET_Connect) 打开的短会话; 会话按需开关, 空闲超时自动断
+ *  - 会话结束(NET_SessionEnd / NET_WifiStop): 静止射频(省电 + 零网络暴露面); 唤醒/待机不再自动重连
+ *  - STA 已连时再按"连接网络" = 手动断开; 网页每个请求都 NET_Touch() 续期, 防气象屏期间被误断
+ *  - 拿到 IP 后后台拉取一次 3 日天气(会话短, 无驻留周期刷新); 今日天气显示在时钟下方(UI 组件)
+ *  - 天气为 3 日预报, 有效窗口 72h: 窗口内按时显示, 超期且无新校正则隐藏(离线看板)
  *  - DS1302 硬件 RTC: 上电(main.c)有效则直接采用 -> 开机即显示时间;
  *    SNTP 校时回调写回 DS1302(校准/初始化, 断电由模块电池继续走时)
  * 参考: WIFISTR.c(WiFi STA 事件驱动) + MYRTC.c(SNTP 校时, CST-8)
@@ -42,7 +44,7 @@ static const char *TAG = "NET";
 #define SNTP_SERVER2   "ntp.tencent.com"
 
 #define NET_WEATHER_DAYS  3             /* 拉取天数 */
-#define NET_WEATHER_REFRESH_MIN  30     /* 天气自动刷新间隔分钟(0=仅连上时拉一次) */
+#define NET_WEATHER_VALID_SEC  (72UL * 3600)  /* 路径1: 3 日预报有效窗口=72h, 超期无新校正则隐藏 */
 
 /* 运行期配置(NVS "net" 命名空间: ssid/pass/city/key) */
 static char net_ssid[33] = "";
@@ -56,7 +58,9 @@ static uint8_t sta_retry = 0;       /* STA 连续断连次数(≤2 后静默, �
 
 static uint8_t net_wifi_ok = 0;   /* WiFi 已连上 */
 static uint8_t net_time_ok = 0;   /* 时间已同步 */
-static uint8_t net_started = 0;   /* 已开始联网(幂等) */
+static uint8_t net_radio_on = 0;  /* 射频已启动(esp_wifi_start 成功且未被 stop): 按需会话的"在网"标志 */
+static uint8_t net_manual_off = 0;/* 本次断开为手动交接(NET_SessionEnd): 抑制 DISCONNECTED 事件里的自动重连 */
+static uint32_t net_last_activity = 0;  /* 会话最近一次活动(NET_Connect/NET_Touch)时刻 ms, 供空闲自动断 */
 
 /* ================= AP 配网热点状态(省电: 无客户端超时自动关) ================= */
 static uint8_t  net_ap_client = 0;           /* 1=有手机连着热点 */
@@ -251,28 +255,13 @@ static void net_weather_fetch(void)
     }
 }
 
-/* 天气后台任务: 连上后拉取, 之后每 NET_WEATHER_REFRESH_MIN 分钟自动刷新一次
+/* 天气后台任务: 每次连上(GOT_IP)拉取一次即退出.
+ * 路径1「按需短会话」里没有驻留周期刷新的场景: 会话空闲即断, 周期刷新既到不了也会拖长会话.
  * 优先级 1(低于 UI 任务 3): TLS 加密 CPU 密集, 避免抢占屏幕刷新导致卡死 */
 static void net_weather_task(void *arg)
 {
-    if (NET_WEATHER_REFRESH_MIN == 0)
-    {
-        net_weather_fetch();   /* 仅连上时拉一次 */
-        net_weather_fetched = 0;
-        net_weather_busy = 0;
-        vTaskDelete(NULL);
-        return;
-    }
-    while (net_wifi_ok)
-    {
-        net_weather_fetch();
-        /* 等刷新间隔(2s 步进), 中途断网则退出, 由下次 GOT_IP 重建 */
-        for (int i = 0; i < (NET_WEATHER_REFRESH_MIN * 60) / 2 && net_wifi_ok; i++)
-        {
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-        }
-    }
-    net_weather_fetched = 0;   /* 断线: 允许重连后重建任务重拉 */
+    net_weather_fetch();
+    net_weather_fetched = 0;   /* 允许后续会话重连时重建任务再拉 */
     net_weather_busy = 0;
     vTaskDelete(NULL);
 }
@@ -290,11 +279,31 @@ static void net_sntp_synced(struct timeval *tv)
     ESP_LOGI(TAG, "SNTP time synced");
 }
 
-/* 统一发射功率: 每次 esp_wifi_start 后调用(8dBm≈6.3mW 降温省电, 家用/配网足够).
- * esp_wifi_stop/start 会把功率重置回默认 20dBm, 故 AP 切换/重连后必须重设. */
+/* 统一发射功率: 每次射频启动后 8dBm≈6.3mW(降温省电, 家用/配网足够).
+ * esp_wifi_stop/start 会把功率重置回默认 20dBm, 故每次启动后必须重设. */
 static void net_tx_power(void)
 {
     esp_wifi_set_max_tx_power(8);
+}
+
+/* 统一射频启停(路径1): 所有 esp_wifi_start/stop 都走这里, 保证 net_radio_on 与真实状态一致,
+ * 避免某条路径只 stop 不置标志, 导致 NET_Connect 对"射频是否在跑"误判. */
+static void net_radio_stop(void)
+{
+    esp_wifi_stop();
+    net_radio_on = 0;
+}
+
+static void net_radio_start(void)
+{
+    esp_err_t e = esp_wifi_start();
+    if (e != ESP_OK)
+    {
+        ESP_LOGW(TAG, "wifi start: %s", esp_err_to_name(e));
+        return;
+    }
+    net_radio_on = 1;
+    net_tx_power();   /* 启动会重置功率, 统一重设 8dBm */
 }
 
 /* 配网热点超时自动关闭: 开启后持续无手机连接超 5 分钟, 自动回 STA 停广播 beacon(降温省电).
@@ -307,6 +316,11 @@ static void net_ap_timeout_task(void *arg)
     for (;;)
     {
         vTaskDelay(NET_AP_TICK_MS / portTICK_PERIOD_MS);
+        if (!net_radio_on)   /* 射频已被外部关停(待机/会话结束): AP 管理无意义, 退出(防待机复拉射频) */
+        {
+            net_ap_timeout_task_run = 0;
+            break;
+        }
         wifi_mode_t mode;
         esp_wifi_get_mode(&mode);
         if (mode != WIFI_MODE_APSTA)
@@ -317,10 +331,9 @@ static void net_ap_timeout_task(void *arg)
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (net_ap_client || now - net_ap_open_ms < NET_AP_TIMEOUT_MS) continue;
         ESP_LOGI(TAG, "AP no client for %u min, auto off (cool down)", NET_AP_TIMEOUT_MS / 60000);
-        esp_wifi_stop();
+        net_radio_stop();
         esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_start();
-        net_tx_power();
+        net_radio_start();
         net_ap_timeout_task_run = 0;
         net_dns_active = 0;   /* DNS 随超时关热点一起停(任务自行收尾关 fd) */
         break;
@@ -335,6 +348,7 @@ static void net_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         if (id == WIFI_EVENT_STA_START)
         {
             sta_retry = 0;
+            net_manual_off = 0;   /* 新一轮会话开始: 清手动断标志, 之后掉线恢复自动重连 */
             if (net_ssid[0]) esp_wifi_connect();   /* 有存好的 WiFi 才自动连 */
         }
         else if (id == WIFI_EVENT_STA_CONNECTED)
@@ -349,15 +363,23 @@ static void net_event_handler(void *arg, esp_event_base_t base, int32_t id, void
             wifi_event_sta_disconnected_t *e = (wifi_event_sta_disconnected_t *)data;
             net_wifi_ok = 0;
             net_weather_fetched = 0;   /* 重连后重新拉天气 */
-            sta_retry++;
-            if (net_ssid[0] && sta_retry <= 1)       /* 初始1次+重试1次, 之后静默: 热点更稳定+降温 */
+            if (net_manual_off)        /* 路径1: 用户手动断开(NET_SessionEnd), 不自动重连 */
             {
-                ESP_LOGW(TAG, "WiFi disconnected(reason=%d), retry %u", e ? (int)e->reason : -1, sta_retry);
-                esp_wifi_connect();
+                net_manual_off = 0;
+                ESP_LOGI(TAG, "STA session manually ended");
             }
             else
             {
-                ESP_LOGW(TAG, "WiFi unavailable(reason=%d) - AP config page at 192.168.4.1", e ? (int)e->reason : -1);
+                sta_retry++;
+                if (net_ssid[0] && sta_retry <= 1)   /* 初始1次+重试1次, 之后静默: 热点更稳定+降温 */
+                {
+                    ESP_LOGW(TAG, "WiFi disconnected(reason=%d), retry %u", e ? (int)e->reason : -1, sta_retry);
+                    esp_wifi_connect();
+                }
+                else
+                {
+                    ESP_LOGW(TAG, "WiFi unavailable(reason=%d) - AP config page at 192.168.4.1", e ? (int)e->reason : -1);
+                }
             }
         }
         else if (id == WIFI_EVENT_AP_STACONNECTED)   /* 配网热点有手机连上: 暂停超时自动关 */
@@ -510,22 +532,32 @@ static void net_cfg_save(void)
     }
 }
 
-static void net_sntp_init(void)
+/* 联网会话内启动/重启 SNTP 校时(路径1: SNTP 只在会话内跑, 平时射频关, 不挂空转协议栈) */
+static uint8_t net_sntp_started = 0;
+static void net_sntp_start(void)
 {
-    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, SNTP_SERVER0);
-    esp_sntp_setservername(1, SNTP_SERVER1);
-    esp_sntp_setservername(2, SNTP_SERVER2);
-    esp_sntp_set_time_sync_notification_cb(net_sntp_synced);
-    esp_sntp_init();
-
-    setenv("TZ", "CST-8", 1);        /* 东八区, 无夏令时 */
-    tzset();
+    if (!net_sntp_started)
+    {
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, SNTP_SERVER0);
+        esp_sntp_setservername(1, SNTP_SERVER1);
+        esp_sntp_setservername(2, SNTP_SERVER2);
+        esp_sntp_set_time_sync_notification_cb(net_sntp_synced);
+        esp_sntp_init();
+        net_sntp_started = 1;
+    }
+    else
+    {
+        esp_sntp_restart();   /* 已初始化(不远的会话重连): 立即重新校时, 消除 DS1302 漂移 */
+    }
 }
 
 void NET_Init(void)
 {
     net_cfg_load();   /* 载入持久化 WiFi/城市 */
+
+    setenv("TZ", "CST-8", 1);        /* 东八区, 无夏令时(离线也需要: main.c 用 mktime 换算 DS1302 时间) */
+    tzset();
 
     esp_netif_init();
     esp_event_loop_create_default();
@@ -553,12 +585,9 @@ void NET_Init(void)
     esp_wifi_set_mode(WIFI_MODE_STA);
     if (net_cfg_valid) esp_wifi_set_config(WIFI_IF_STA, &wcfg);
 
-    net_sntp_init();
-    esp_wifi_start();
-    net_tx_power();                  /* 统一发射功率 8dBm(降温省电, 见 net_tx_power) */
-    net_started = 1;
-    /* DNS(captive portal)不在初始化时启动: 只有手动开启配网热点后才运行, 纯 STA 不占 UDP53/不应答 */
-    ESP_LOGI(TAG, "NET STA registered (saved=%d, 配网热点需 联网->开启配网 手动开启)", (int)net_cfg_valid);
+    /* 路径1 完全按需: 射频在此不启动(不自动连网、不挂 SNTP) —— 默认离线, 零功耗/零暴露面.
+     * 由 联网->连接网络(NET_Connect) 按需打开射频并校时. */
+    ESP_LOGI(TAG, "NET ready (radio OFF; 联网按需 NET_Connect; 配网热点需 联网->开启配网 手动开启)");
 }
 
 /* 开启配网: 手动开/关配网热点(纯 STA <-> AP+STA), 返回 1=已开 0=已关 */
@@ -568,10 +597,9 @@ uint8_t NET_ApToggle(void)
     esp_wifi_get_mode(&mode);
     if (mode == WIFI_MODE_APSTA)
     {
-        esp_wifi_stop();
+        net_radio_stop();
         esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_start();
-        net_tx_power();
+        net_radio_start();
         net_ap_client = 0;   /* 复位客户端状态 */
         net_dns_active = 0;  /* DNS 随热点关闭(任务自行收尾关 fd) */
         ESP_LOGI(TAG, "AP off -> STA only");
@@ -585,11 +613,10 @@ uint8_t NET_ApToggle(void)
         strncpy((char *)acfg.ap.password, net_ap_pass, sizeof(acfg.ap.password) - 1);
         acfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
         acfg.ap.max_connection = 4;
-        esp_wifi_stop();
+        net_radio_stop();
         esp_wifi_set_mode(WIFI_MODE_APSTA);
         esp_wifi_set_config(WIFI_IF_AP, &acfg);
-        esp_wifi_start();
-        net_tx_power();   /* 开热点后重设功率(防 stop/start 重置回 20dBm) */
+        net_radio_start();   /* 内部含 net_tx_power 重设(防 stop/start 重置回 20dBm) */
         net_ap_open_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (!net_dns_task_h)
         {
@@ -649,7 +676,7 @@ void NET_SetWifi(const char *ssid, const char *pass)
         wcfg.sta.password[pl] = '\0';
     }
 
-    if (net_started)
+    if (net_radio_on)
     {
         wifi_mode_t mode;
         esp_wifi_get_mode(&mode);
@@ -660,11 +687,11 @@ void NET_SetWifi(const char *ssid, const char *pass)
         }
         else
         {
-            esp_wifi_stop();                            /* 兜底: 非 APSTA 才重启射频 */
-            esp_wifi_set_mode(WIFI_MODE_APSTA);
+            /* 普通 STA 会话里保存配置(非配网页): 保持 STA 模式, 不偷偷把配网热点打开(路径1 按需) */
+            net_radio_stop();
+            esp_wifi_set_mode(WIFI_MODE_STA);
             esp_wifi_set_config(WIFI_IF_STA, &wcfg);
-            esp_wifi_start();
-            net_tx_power();
+            net_radio_start();   /* 重启后 STA_START 自动连新/原 WiFi */
         }
     }
 }
@@ -676,15 +703,12 @@ void NET_ClearWifi(void)
     net_pass[0] = '\0';
     net_cfg_valid = 0;
     net_cfg_save();                 /* 空 ssid/pass 写回 NVS: 下次 net_cfg_load 判定为纯 AP */
-    if (net_started)
+    if (net_radio_on)
     {
         esp_wifi_disconnect();
-        esp_wifi_stop();
-        esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_start();
-        net_tx_power();
+        NET_WifiStop();   /* 清空后没有可连的 WiFi: 射频全停, 回离线态(路径1 离线优先, 不空转) */
     }
-    ESP_LOGI(TAG, "saved WiFi cleared (back to pure AP provisioning)");
+    ESP_LOGI(TAG, "saved WiFi cleared (radio off; 重新配网请 联网->开启配网)");
 }
 
 void NET_SetCity(const char *city)
@@ -748,38 +772,74 @@ uint8_t NET_ScanWifi(uint8_t max, char ssids[][33], int8_t rssi[], uint8_t enc[]
     return (uint8_t)num;
 }
 
-/* 手动联网(开机已自动联网; 此函数用于断网时重新连接) */
+/* 按需开启联网会话(路径1): 射频没开则启动+立即校时, 然后连已存 WiFi; 记为会话活动起点 */
 void NET_Connect(void)
 {
-    if (!net_started)
+    if (!net_radio_on)
     {
-        net_started = 1;
-        esp_wifi_start();
+        net_radio_start();                     /* 启动射频(STA_START 事件会自动连已存 WiFi) */
+        if (!net_radio_on) return;             /* 启动失败(如射频忙): 下次再按即可 */
+        net_sntp_start();                      /* 会话内立即校时, 消除 DS1302 长期漂移 */
     }
     else if (net_ssid[0] && !net_wifi_ok)
     {
-        esp_wifi_connect();
+        esp_wifi_connect();                    /* 射频已在跑(如手动断开后): 直接重连 */
     }
+    NET_Touch();
 }
 
 /* ================= 对外查询 ================= */
 uint8_t NET_WifiOk(void) { return net_wifi_ok; }
 uint8_t NET_TimeOk(void) { return net_time_ok; }
 
-/* ================= 待机(浅睡眠)前后: 停/启 WiFi ================= */
+/* ================= 联网会话停止(路径1) ================= */
+
+/* 全停射频: 待机进浅睡眠 / 纯 STA 手动断开时调用. 最省电、零暴露面. */
 void NET_WifiStop(void)
 {
-    esp_wifi_stop();
+    net_radio_stop();
+    esp_wifi_set_mode(WIFI_MODE_STA);   /* mode 归位 STA: 若此前开过配网热点, 避免残留 APSTA 配置使再按 开启配网 误判为"已开" */
+    esp_sntp_stop();                    /* 会话结束停 SNTP(按需联网: 只在会话内跑, 见 net_sntp_start) */
     net_wifi_ok = 0;
-    net_weather_fetched = 0;   /* 重连后重新拉天气 */
-    net_dns_active = 0;        /* 待机停 WiFi: DNS 任务一并停(防配网热点开着时待机空转耗电) */
+    net_weather_fetched = 0;   /* 下次会话重新拉天气 */
+    net_dns_active = 0;        /* 停 WiFi: DNS(captive portal)任务一并停(防配网热点空转耗电) */
 }
 
-void NET_WifiStart(void)
+/* 结束 STA 联网会话(手动 联网->连接网络 再按一次, 或 ui_task 空闲超时自动断):
+ * 配网热点开着时只断 STA 关联(保留热点与配置页), 否则整机射频停. */
+void NET_SessionEnd(void)
 {
-    esp_wifi_start();          /* STA_START 事件自动重连(存好的 WiFi) */
-    net_tx_power();            /* 唤醒后重设发射功率 8dBm(esp_wifi_start 会重置回 20dBm) */
-    esp_sntp_restart();        /* 立即重新校时(系统时钟/DS1302 一起回准) */
+    wifi_mode_t mode;
+    esp_wifi_get_mode(&mode);
+    if (mode == WIFI_MODE_APSTA)          /* 在配网(AP 开着): 只断 STA, 不动热点 */
+    {
+        net_manual_off = 1;               /* 抑制 DISCONNECTED 事件里的自动重连 */
+        esp_wifi_disconnect();
+        net_wifi_ok = 0;
+        net_weather_fetched = 0;
+        ESP_LOGI(TAG, "STA session ended (AP hotspot kept)");
+    }
+    else
+    {
+        net_manual_off = 1;               /* 全停前也置位: esp_wifi_stop 可能触发 DISCONNECTED, 防御重连 */
+        NET_WifiStop();
+    }
+}
+
+/* 会话活动续期: WEB 每个请求调用, 让"网页配置中"不被空闲自动断误判(路径1) */
+void NET_Touch(void)
+{
+    net_last_activity = (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* 距上次会话活动(NET_Connect/NET_Touch)的毫秒数; 未在网返回 UINT32_MAX(供空闲自动断判断) */
+uint32_t NET_SessionIdleMs(void)
+{
+    if (!net_radio_on && !net_wifi_ok)
+    {
+        return UINT32_MAX;
+    }
+    return (uint32_t)(esp_timer_get_time() / 1000) - net_last_activity;
 }
 
 /* 采用外部有效时间(main.c 从 DS1302 读出后调用): 免联网即标记时间有效, 开机直接显示 */
@@ -847,13 +907,21 @@ const char *NET_WeekStr(void)
     return buf;
 }
 
+/* 路径1「离线看板」: 3 日预报只有 72h 有效窗口(超出即「今天」已滑出预报区),
+ * 超期且无新校正则视为无数据, 各显示面(主屏/详情/状态/彩蛋)统一隐藏 */
+static uint8_t net_weather_valid_now(void)
+{
+    return net_weather_ok &&
+           (uint32_t)(time(NULL) - net_weather_at) <= NET_WEATHER_VALID_SEC;
+}
+
 const char *NET_WeatherStr(void)
 {
     static char buf[32];
     struct tm t;
     time_t now;
     const char *txt;
-    if (!net_weather_ok)
+    if (!net_weather_valid_now())
     {
         return NULL;
     }
@@ -871,7 +939,7 @@ const char *NET_WeatherStr(void)
 
 uint8_t NET_WeatherCount(void)
 {
-    return net_weather_ok ? net_weather_n : 0;
+    return net_weather_valid_now() ? net_weather_n : 0;
 }
 
 /* 天气数据年龄(秒): 距上次拉取成功; 0=无数据(调用方据此判断是否"旧数据"加时间戳) */
@@ -896,7 +964,7 @@ const char *NET_WeatherUpdatedStr(void)
 const char *NET_WeatherDayStr(uint8_t idx)
 {
     static char buf[NET_WEATHER_DAYS][32];   /* 各 idx 独立缓冲, 避免互相覆盖 */
-    if (!net_weather_ok || idx >= net_weather_n)
+    if (!net_weather_valid_now() || idx >= net_weather_n)
     {
         return NULL;
     }
@@ -913,7 +981,7 @@ const char *NET_WeatherMadStr(void)
     static char buf[32];
     uint8_t idx;
     int hi, lo, rhi, rlo, hum;
-    if (!net_weather_ok) return NULL;
+    if (!net_weather_valid_now()) return NULL;
     idx = (uint8_t)(esp_random() % NET_WEATHER_DAYS);   /* 天气词随机(晴/多云/雷阵雨…) */
     hi = atoi(net_w[idx].high);
     lo = atoi(net_w[idx].low);
