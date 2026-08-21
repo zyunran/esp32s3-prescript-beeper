@@ -302,13 +302,17 @@ void ANS_FromText(uint8_t cat, const char *text)   /* 网页覆盖整类答案(�
         size_t len;
         nl = strchr(p, '\n');
         len = nl ? (size_t)(nl - p) : strlen(p);
-        if (len >= ANS_LINE_MAX) break;     /* 超长行拒绝(截断保存) */
+        if (len >= ANS_LINE_MAX) break;     /* 超长行: 中止解析并保存已解析部分(该行及后续行丢弃) */
         if (len > 0)
         {
-            memcpy(ans_nvs_buf[cat][n], p, len);
-            ans_nvs_buf[cat][n][len] = '\0';
-            ans_list[cat][n] = ans_nvs_buf[cat][n];
-            n++;
+            while (len > 0 && p[len - 1] == '\r') len--;   /* 网页 textarea 常发 CRLF: 剥掉行尾 \r, 防显示异常 */
+            if (len > 0)
+            {
+                memcpy(ans_nvs_buf[cat][n], p, len);
+                ans_nvs_buf[cat][n][len] = '\0';
+                ans_list[cat][n] = ans_nvs_buf[cat][n];
+                n++;
+            }
         }
         if (!nl) break;
         p = nl + 1;

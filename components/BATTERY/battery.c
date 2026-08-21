@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"   /* adc 跨任务互斥量 */
 
 static const char *TAG = "BAT";
+static uint8_t bat_init_done = 0;              /* 幂等守卫(旧实现重复调用会覆盖已建句柄) */
 static adc_oneshot_unit_handle_t bat_adc = NULL;
 static adc_cali_handle_t bat_cali = NULL;
 static SemaphoreHandle_t bat_mux = NULL;   /* 电量读取互斥(ui_task 与 httpd 任务共用) */
@@ -24,6 +25,11 @@ void BAT_Init(void)
         .atten = ADC_ATTEN_DB_12,        /* 0~3.1V 量程(12位) */
         .bitwidth = ADC_BITWIDTH_12,
     };
+    if (bat_init_done)
+    {
+        return;                          /* 幂等: 防重复初始化覆盖句柄/泄漏 ADC 单元 */
+    }
+    bat_init_done = 1;
     if (adc_oneshot_new_unit(&icfg, &bat_adc) != ESP_OK)
     {
         bat_adc = NULL;

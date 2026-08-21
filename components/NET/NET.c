@@ -6,7 +6,6 @@
  *  - 天气为 3 日预报, 有效窗口 72h: 窗口内按时显示, 超期且无新校正则隐藏(离线看板)
  *  - DS1302 硬件 RTC: 上电(main.c)有效则直接采用 -> 开机即显示时间;
  *    SNTP 校时回调写回 DS1302(校准/初始化, 断电由模块电池继续走时)
- * 参考: WIFISTR.c(WiFi STA 事件驱动) + MYRTC.c(SNTP 校时, CST-8)
  * 注意: 本组件假定已先调用 nvs_flash_init()(main 中完成). */
 #include "NET.h"
 #include "DS1302.h"
@@ -109,6 +108,23 @@ static esp_err_t net_weather_http_event(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+/* 按缓冲容量截断到完整 UTF-8 字符边界: 消除 strncpy 截出的残缺尾字节(显示方框/错位) */
+static void net_utf8_clip(char *s, size_t cap)
+{
+    size_t i = 0, last = 0;
+    while (s[i] != '\0')
+    {
+        size_t len = 1;
+        unsigned char c = (unsigned char)s[i];
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        if (i + len > cap - 1) break;        /* 整个字符放不下: 停, 视为截断 */
+        i += len;
+        last = i;
+    }
+    s[last] = '\0';
+}
+
 /* 解析 results[0].daily[]: date/text_day/high/low */
 static void net_weather_parse(const char *json)
 {
@@ -126,6 +142,8 @@ static void net_weather_parse(const char *json)
     n = daily ? cJSON_GetArraySize(daily) : 0;
     if (n > NET_WEATHER_DAYS) n = NET_WEATHER_DAYS;
 
+    /* 天气槽与显示读互斥(net_mux): 解析清空/填充期间, UI 读取不看到半新旧混合或全空槽 */
+    portENTER_CRITICAL(&net_mux);
     memset(net_w, 0, sizeof(net_w));   /* 清残留: 解析跳过槽不再把上次/空数据显示为有效(C1) */
     uint8_t filled = 0;
     for (i = 0; i < n; i++)
@@ -161,6 +179,7 @@ static void net_weather_parse(const char *json)
         }
         strncpy(net_w[filled].text_day, text->valuestring, sizeof(net_w[filled].text_day) - 1);
         net_w[filled].text_day[sizeof(net_w[filled].text_day) - 1] = '\0';
+        net_utf8_clip(net_w[filled].text_day, sizeof(net_w[filled].text_day));   /* 截断不切残字 */
         if (text_n && cJSON_IsString(text_n) && text_n->valuestring[0])
         {
             strncpy(net_w[filled].text_night, text_n->valuestring, sizeof(net_w[filled].text_night) - 1);
@@ -170,6 +189,7 @@ static void net_weather_parse(const char *json)
             strncpy(net_w[filled].text_night, net_w[filled].text_day, sizeof(net_w[filled].text_night) - 1);  /* 缺失回退白天 */
         }
         net_w[filled].text_night[sizeof(net_w[filled].text_night) - 1] = '\0';
+        net_utf8_clip(net_w[filled].text_night, sizeof(net_w[filled].text_night));
         strncpy(net_w[filled].high, high->valuestring, sizeof(net_w[filled].high) - 1);
         net_w[filled].high[sizeof(net_w[filled].high) - 1] = '\0';
         strncpy(net_w[filled].low,  low->valuestring,  sizeof(net_w[filled].low) - 1);
@@ -191,6 +211,10 @@ static void net_weather_parse(const char *json)
     {
         net_weather_ok = 1;
         net_weather_at = time(NULL);   /* 记拉取时刻(旧数据显示"更新于…"用) */
+    }
+    portEXIT_CRITICAL(&net_mux);
+    if (filled > 0)
+    {
         ESP_LOGI(TAG, "Weather[0]: %s %s/%s", net_w[0].text_day, net_w[0].high, net_w[0].low);
     }
     cJSON_Delete(root);
@@ -399,7 +423,12 @@ static void net_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         {
             net_weather_fetched = 1;
             net_weather_busy = 1;
-            xTaskCreate(net_weather_task, "weather", 12288, NULL, 1, NULL);   /* 低优先级防抢UI, 大栈防TLS溢出 */
+            if (xTaskCreate(net_weather_task, "weather", 12288, NULL, 1, NULL) != pdPASS)
+            {
+                net_weather_fetched = 0;   /* 任务分配失败: 复位标志, 下次 GOT_IP 再试(防 busy 永久卡死) */
+                net_weather_busy = 0;
+                ESP_LOGW(TAG, "weather task create failed, will retry");
+            }
         }
     }
 }
@@ -656,7 +685,8 @@ static void net_reconnect_task(void *arg)
 }
 
 /* 设置 WiFi/天气城市并持久化; WiFi 改动立即应用并重连.
- * 已是 APSTA 时只改 STA 配置并延迟重连(不重启射频, 热点不掉, 网页能收到"已保存") */
+ * 只在射频开着时动硬件; 无论 STA 还是配网 APSTA 会话: 只写新 STA 配置 + 延迟重连,
+ * 不重启射频 —— 保证网页"保存"响应先发出去(重启射频会掐掉负责本请求的链路). */
 void NET_SetWifi(const char *ssid, const char *pass)
 {
     strncpy(net_ssid, ssid, sizeof(net_ssid) - 1);
@@ -678,25 +708,28 @@ void NET_SetWifi(const char *ssid, const char *pass)
 
     if (net_radio_on)
     {
-        wifi_mode_t mode;
-        esp_wifi_get_mode(&mode);
-        if (mode == WIFI_MODE_APSTA)
-        {
-            esp_wifi_set_config(WIFI_IF_STA, &wcfg);
-            xTaskCreate(net_reconnect_task, "recon", 2048, NULL, 1, NULL);  /* 延迟重连: 让保存响应先发给网页 */
-        }
-        else
-        {
-            /* 普通 STA 会话里保存配置(非配网页): 保持 STA 模式, 不偷偷把配网热点打开(路径1 按需) */
-            net_radio_stop();
-            esp_wifi_set_mode(WIFI_MODE_STA);
-            esp_wifi_set_config(WIFI_IF_STA, &wcfg);
-            net_radio_start();   /* 重启后 STA_START 自动连新/原 WiFi */
-        }
+        esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+        xTaskCreate(net_reconnect_task, "recon", 2048, NULL, 1, NULL);  /* 延迟重连: 让保存响应先发给网页 */
     }
 }
 
-/* 清除已存 WiFi(网页"清除"按钮): 删 ssid/pass, 回纯 AP 配网模式(下次启动按纯 AP 判定) */
+/* 清除后处理任务: 等网页的 {"ok":1} 响应先发出去, 再全停射频并按配网模式开热点(供手机重新配网) */
+static void net_clearwifi_task(void *arg)
+{
+    vTaskDelay(600 / portTICK_PERIOD_MS);   /* 延迟: 让响应送达浏览器, 避免射频操作掐断本请求 */
+    wifi_mode_t mode;
+    esp_wifi_get_mode(&mode);
+    if (mode == WIFI_MODE_APSTA)            /* 先归位纯 STA(否则 NET_ApToggle 会误判为"关热点") */
+    {
+        net_radio_stop();
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        net_radio_start();
+    }
+    NET_ApToggle();                         /* 回配网模式: 开启热点(此时 mode=STA, 走"开"分支) */
+    vTaskDelete(NULL);
+}
+
+/* 清除已存 WiFi(网页"清除"按钮): 删 ssid/pass, 回到纯 AP 配网模式(清空后自动开配网热点) */
 void NET_ClearWifi(void)
 {
     net_ssid[0] = '\0';
@@ -705,10 +738,9 @@ void NET_ClearWifi(void)
     net_cfg_save();                 /* 空 ssid/pass 写回 NVS: 下次 net_cfg_load 判定为纯 AP */
     if (net_radio_on)
     {
-        esp_wifi_disconnect();
-        NET_WifiStop();   /* 清空后没有可连的 WiFi: 射频全停, 回离线态(路径1 离线优先, 不空转) */
+        xTaskCreate(net_clearwifi_task, "clrwifi", 2048, NULL, 1, NULL);   /* 响应先发, 射频后动 */
     }
-    ESP_LOGI(TAG, "saved WiFi cleared (radio off; 重新配网请 联网->开启配网)");
+    ESP_LOGI(TAG, "saved WiFi cleared (配网热点稍候自动开启)");
 }
 
 void NET_SetCity(const char *city)
@@ -800,7 +832,7 @@ void NET_WifiStop(void)
 {
     net_radio_stop();
     esp_wifi_set_mode(WIFI_MODE_STA);   /* mode 归位 STA: 若此前开过配网热点, 避免残留 APSTA 配置使再按 开启配网 误判为"已开" */
-    esp_sntp_stop();                    /* 会话结束停 SNTP(按需联网: 只在会话内跑, 见 net_sntp_start) */
+    if (net_sntp_started) esp_sntp_stop();   /* 会话结束停 SNTP(仅当启用过才停, 防未初始化调用) */
     net_wifi_ok = 0;
     net_weather_fetched = 0;   /* 下次会话重新拉天气 */
     net_dns_active = 0;        /* 停 WiFi: DNS(captive portal)任务一并停(防配网热点空转耗电) */
@@ -836,9 +868,9 @@ void NET_Touch(void)
 /* 距上次会话活动(NET_Connect/NET_Touch)的毫秒数; 未在网返回 UINT32_MAX(供空闲自动断判断) */
 uint32_t NET_SessionIdleMs(void)
 {
-    if (!net_radio_on && !net_wifi_ok)
+    if (!net_radio_on)
     {
-        return UINT32_MAX;
+        return UINT32_MAX;   /* 射频已停: 无会话可言 */
     }
     return (uint32_t)(esp_timer_get_time() / 1000) - net_last_activity;
 }
@@ -912,7 +944,7 @@ const char *NET_WeekStr(void)
  * 超期且无新校正则视为无数据, 各显示面(主屏/详情/状态/彩蛋)统一隐藏 */
 static uint8_t net_weather_valid_now(void)
 {
-    return net_weather_ok &&
+    return net_weather_ok && net_time_ok &&   /* 时间未校时(无 DS1302 且未联网)不判窗口, 与 DateStr 同门控 */
            (uint32_t)(time(NULL) - net_weather_at) <= NET_WEATHER_VALID_SEC;
 }
 
@@ -929,12 +961,14 @@ const char *NET_WeatherStr(void)
     /* 按当前时段自动选白天/晚上天气(6:00~17:59 白天, 其余晚上) */
     time(&now);
     localtime_r(&now, &t);
-    txt = (t.tm_hour >= NET_DAY_START_HOUR && t.tm_hour < NET_DAY_END_HOUR)
-          ? net_w[0].text_day : net_w[0].text_night;
     /* 主界面天气区仅 ~106px, 湿度放不下(3字天气词+温度已占满), 故不显示湿度;
      * 湿度在"联网->查看天气"详情页可见(NET_WeatherDayStr). */
+    portENTER_CRITICAL(&net_mux);   /* 与天气任务的清空/填充互斥: 防读到全空/半新旧槽 */
+    txt = (t.tm_hour >= NET_DAY_START_HOUR && t.tm_hour < NET_DAY_END_HOUR)
+          ? net_w[0].text_day : net_w[0].text_night;
     snprintf(buf, sizeof(buf), "%s %s/%s",
              txt, net_w[0].high, net_w[0].low);
+    portEXIT_CRITICAL(&net_mux);
     return buf;   /* "雷阵雨 36/24" */
 }
 
@@ -970,9 +1004,11 @@ const char *NET_WeatherDayStr(uint8_t idx)
         return NULL;
     }
     /* 详情页全屏破译显示, 宽度足够, 湿度带 % */
+    portENTER_CRITICAL(&net_mux);   /* 与天气任务清空/填充互斥 */
     snprintf(buf[idx], sizeof(buf[idx]), "%s %s %s/%s %s%%",
              net_w[idx].date, net_w[idx].text_day, net_w[idx].high, net_w[idx].low,
              net_w[idx].humidity);
+    portEXIT_CRITICAL(&net_mux);
     return buf[idx];   /* "08-12 晴 36/24 75%" */
 }
 
@@ -984,6 +1020,7 @@ const char *NET_WeatherMadStr(void)
     int hi, lo, rhi, rlo, hum;
     if (!net_weather_valid_now()) return NULL;
     idx = (uint8_t)(esp_random() % NET_WEATHER_DAYS);   /* 天气词随机(晴/多云/雷阵雨…) */
+    portENTER_CRITICAL(&net_mux);   /* 与天气任务清空/填充互斥 */
     hi = atoi(net_w[idx].high);
     lo = atoi(net_w[idx].low);
     if (lo > hi) { int t = lo; lo = hi; hi = t; }
@@ -992,5 +1029,6 @@ const char *NET_WeatherMadStr(void)
     rlo = lo + (int)(esp_random() % (uint32_t)(rhi - lo + 1));
     hum = 30 + (int)(esp_random() % 66);   /* 湿度 30~95% */
     snprintf(buf, sizeof(buf), "%s %d/%d %d%%", net_w[idx].text_day, rhi, rlo, hum);
+    portEXIT_CRITICAL(&net_mux);
     return buf;   /* "雷阵雨 38/29 75%" */
 }

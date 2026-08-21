@@ -331,6 +331,8 @@ void ALM_Init(void)
     for (i = 0; i < ALM_MAX; i++)       /* 旧数据(无 days/once): 默认每天, 一次性关 */
     {
         if (alm[i].en && alm[i].days == 0) alm[i].days = 0x7F;
+        if (alm[i].hh > 23) alm[i].hh = 23;   /* 与 ALM_SetSlot 同款钳位: 防 NVS 坏值(99:99 永不触发/显示异常) */
+        if (alm[i].mm > 59) alm[i].mm = 59;
     }
 }
 
@@ -357,12 +359,21 @@ void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, ui
     if (hh > 23) hh = 23;
     if (mm > 59) mm = 59;
     if (days > 0x7F) days &= 0x7F;      /* 只保留星期位 bit0..bit6 */
-    alm[i].en = en ? 1 : 0;
+    en = en ? 1 : 0;
+    once = once ? 1 : 0;
+    days = days ? days : 0x7F;          /* 无星期(0)视为每天 */
+    /* 值与旧槽相同则直接返回: 不重置当日触发标记(防网页整表重写致同分钟重复响铃), 也不写 NVS(防刷写磨损) */
+    if (alm[i].en == en && alm[i].hh == hh && alm[i].mm == mm &&
+        alm[i].days == days && alm[i].once == once)
+    {
+        return;
+    }
+    alm[i].en = en;
     alm[i].hh = hh;
     alm[i].mm = mm;
-    alm[i].days = days ? days : 0x7F;   /* 无星期(0)视为每天 */
-    alm[i].once = once ? 1 : 0;
-    alm[i].lastday = 0;   /* 重置当日触发标记 */
+    alm[i].days = days;
+    alm[i].once = once;
+    alm[i].lastday = 0;   /* 真变更才重置当日触发标记 */
     alm_save();
 }
 

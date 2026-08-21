@@ -1,8 +1,8 @@
-/* INSTRUCTION 组件: 指令乱码破译显示 + 解码期间蜂鸣
+/* INSTRUCTION 组件: 指令乱码破译显示 + 完成提示蜂鸣
  *  - 全屏显示一条指令文本: 先全乱码再逐字"破译"成真字
- *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {TIMER} 内联计时占位
+ *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {RAND:min-max} 随机数 / {TIMER} 内联计时占位
  *  - 乱码全取 ASCII 且字符数≠真字; 已解码字带滑入位移, 小概率回退乱码
- *  - 解码期间有源蜂鸣器(GPIO15, GPIO电平)随机响 3~4 次, 破译完成提示一响
+ *  - 解码期间不蜂鸣(语音进行音由扬声器播), 完成时蜂鸣器(GPIO15)响 1~2 下
  * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit/UI_RenderScreen)。
  */
 #include "INSTRUCTION.h"
@@ -13,6 +13,7 @@
 #include "snd_data.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "esp_log.h"
 #include "driver/gpio.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -20,6 +21,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+static const char *TAG = "INS";
 
 /* 指令库/破译参数跨任务互斥(清单 M4): WEB 任务写(INS_PresetsFromText/SetParams/SetFont),
  * ui_task 读(INS_Presets/ShowRandom/ShowByIndex/破译解析). INS_Init 创建递归互斥量. */
@@ -227,11 +230,23 @@ static void ins_scr_parse(const char *text)
         {
             const char *p = &text[i + 6];
             int minv = 0, maxv = 0, v;
-            while (*p >= '0' && *p <= '9') { minv = minv * 10 + (*p - '0'); p++; }
+            uint8_t nd;
+            /* 数字最多解析 4 位并吞掉超长剩余: 防 int 溢出(有符号 UB) */
+            for (nd = 0; nd < 4 && *p >= '0' && *p <= '9'; nd++)
+            {
+                minv = minv * 10 + (*p - '0');
+                p++;
+            }
+            while (*p >= '0' && *p <= '9') p++;   /* 超 4 位: 忽略多余位 */
             if (*p == '-')
             {
                 p++;
-                while (*p >= '0' && *p <= '9') { maxv = maxv * 10 + (*p - '0'); p++; }
+                for (nd = 0; nd < 4 && *p >= '0' && *p <= '9'; nd++)
+                {
+                    maxv = maxv * 10 + (*p - '0');
+                    p++;
+                }
+                while (*p >= '0' && *p <= '9') p++;
             }
             if (*p == '}')
             {
@@ -513,12 +528,14 @@ static void ins_scr_step(void)
     }
 }
 
-/* ================= 蜂鸣器(有源, GPIO15, 低电平有效: 低=响 高=静) ================= */
-static uint8_t  ins_beep_remain;              /* 剩余蜂鸣次数 */
-static uint8_t  ins_beep_on;                  /* 正在响 */
-static uint32_t ins_beep_stop;                /* 本次蜂鸣结束时刻 */
-static uint32_t ins_beep_next;                /* 下次蜂鸣开始时刻 */
-static uint8_t  ins_beep_enabled = 1;         /* 蜂鸣总开关(设置可调) */
+/* 蜂鸣器(有源, GPIO15, 低电平有效: 低=响 高=静)
+ * 状态变量被 ui_task(INS_BeepTick)与 httpd 任务(网页试响 INS_BeepTimes)并发读写:
+ * volatile 防跨核缓存; 单字节/对齐 32 位写读在本芯片原子 */
+static volatile uint8_t  ins_beep_remain;       /* 剩余蜂鸣次数 */
+static volatile uint8_t  ins_beep_on;           /* 正在响 */
+static volatile uint32_t ins_beep_stop;         /* 本次蜂鸣结束时刻 */
+static volatile uint32_t ins_beep_next;         /* 下次蜂鸣开始时刻 */
+static volatile uint8_t  ins_beep_enabled = 1;  /* 蜂鸣总开关(设置可调) */
 
 static void ins_buzzer_init(void)
 {
@@ -620,7 +637,7 @@ const char *INS_UserName(void) { return ins_user; }
 
 void INS_SetUserName(const char *name)
 {
-    /* 按 UTF-8 完整字符截断到缓冲(ins_user[16]): 绝不在多字节字符中间切断,
+    /* 按 UTF-8 完整字符截断到缓冲(ins_user[24], 即 INS_USER_NAME_MAX): 绝不在多字节字符中间切断,
      * 避免超长使用者名(网页列表允许 23B)被截出非法 UTF-8 尾巴 */
     size_t n = strnlen(name, sizeof(ins_user) - 1);
     size_t used = 0;
@@ -798,11 +815,11 @@ const char *const *INS_Presets(uint8_t *count)
         ptrs[i] = ins_presets[i];
     }
     ins_unlock();
-    return ptrs;   /* 数组只被 INS_PresetsFromText(同为 web 单线程)写, 解锁后指针稳定 */
+    return ptrs;   /* 注意: 返回的指针表是静态复用缓冲, 下次调用 INS_Presets 会被重写 —— 仅本次调用内有效 */
 }
 
-/* 用 '\n' 分隔文本重建指令库并持久化(WEB 保存) */
-void INS_PresetsFromText(const char *text)
+/* 用 '\n' 分隔文本重建指令库并持久化(WEB 保存); 返回 1=已落盘, 0=失败(内存已回滚到上次持久化状态) */
+uint8_t INS_PresetsFromText(const char *text)
 {
     const char *p = text, *nl;
     uint8_t n = 0;
@@ -824,14 +841,19 @@ void INS_PresetsFromText(const char *text)
     }
     ins_preset_count = n;
 
-    nvs_handle_t h;
-    if (nvs_open("ins", NVS_READWRITE, &h) == ESP_OK)
+    /* 落盘失败(内存不足/NVS 满/分区异常)时回滚内存到上次持久化内容, 让网页明确收到保存失败 */
     {
         size_t total = 1, o = 0;
-        uint8_t i;
+        uint8_t i, ok = 1;
+        char *buf;
         for (i = 0; i < ins_preset_count; i++) total += strlen(ins_presets[i]) + 1;
-        char *buf = malloc(total);
-        if (buf)
+        buf = malloc(total);
+        if (!buf)
+        {
+            ESP_LOGE(TAG, "presets save OOM(%u), rollback", (unsigned)total);
+            ok = 0;
+        }
+        else
         {
             for (i = 0; i < ins_preset_count; i++)
             {
@@ -839,13 +861,32 @@ void INS_PresetsFromText(const char *text)
                 memcpy(buf + o, ins_presets[i], l); o += l;
                 buf[o++] = '\n';
             }
-            nvs_set_blob(h, "presets", buf, o);
-            nvs_commit(h);
+            nvs_handle_t h;
+            if (nvs_open("ins", NVS_READWRITE, &h) != ESP_OK)
+            {
+                ESP_LOGE(TAG, "presets NVS open failed, rollback");
+                ok = 0;
+            }
+            else
+            {
+                if (nvs_set_blob(h, "presets", buf, o) != ESP_OK || nvs_commit(h) != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "presets NVS write failed, rollback");
+                    ok = 0;
+                }
+                nvs_close(h);
+            }
             free(buf);
         }
-        nvs_close(h);
+        if (!ok)
+        {
+            ins_presets_load();   /* 内存回滚: 恢复上次持久化内容(NVS 无则内置默认) */
+            ins_unlock();
+            return 0;
+        }
     }
     ins_unlock();
+    return 1;
 }
 
 void INS_SetBeep(uint8_t on)
@@ -875,6 +916,10 @@ void INS_Show(const char *text)
     ins_scr_on = 1;
 
     /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下 */
+    if (ins_beep_on)
+    {
+        ins_buzzer_off();   /* 取消/重置时若正响着, 立即断 GPIO, 防蜂鸣器卡在低电平持续响 */
+    }
     ins_beep_remain = 0;
     ins_beep_on = 0;
     ins_beep_next = ins_now_ms() + 100 + esp_random() % 300;
@@ -979,6 +1024,10 @@ void INS_BeepTick(void)
 /* 独立蜂鸣 n 下(倒计时结束等), 走同一套 beep_tick 调度 */
 void INS_BeepTimes(uint8_t n)
 {
+    if (ins_beep_on)
+    {
+        ins_buzzer_off();   /* 正在响: 先断 GPIO 再重新调度, 防卡响 */
+    }
     ins_beep_remain = n;
     ins_beep_next = ins_now_ms() + 30;
     ins_beep_on = 0;

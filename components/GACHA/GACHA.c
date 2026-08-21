@@ -1,4 +1,4 @@
-/* GACHA 组件: 抽卡界面(主菜单"观测"直接进入, 十连/退出)
+/* GACHA 组件: 抽卡界面(主菜单"观测"直接进入, 子菜单: 十连/拼点/单抽/积分/图鉴/退出)
  * 非阻塞状态机(由 RTOS 主任务驱动):
  *   - GC_MENU:   十连/拼点/单抽/积分/图鉴/退出 子菜单(复用 UI 通用子菜单)
  *   - GC_ANIM:   竖线从左到右扫过 10 个无色方框并逐个染成该抽稀有度色(时间戳驱动)
@@ -21,7 +21,7 @@
 
 #define GACHA_TEN_N      10     /* 十连次数 */
 #define GACHA_POINTS_PULL 10    /* 积分抽: 10积分抽一次 */
-#define GACHA_MENU_CNT   6      /* 子菜单项数: 十连/拼点/积分抽/积分/图鉴/退出 */
+#define GACHA_MENU_CNT   6      /* 子菜单项数: 十连/拼点/单抽/积分/图鉴/退出 */
 
 /* 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN 一致 */
 #define GC_EVT_UP        1
@@ -168,7 +168,6 @@ static void gacha_start_ten(void);   /* 定义在下文(数据区之后) */
 /* 语音阶段(定义在下文, 先声明) */
 static void gacha_start_voices(void);
 static void gacha_voice_init_card(uint8_t gi);
-static void gacha_enter_menu(void);
 
 static void gacha_anim_tick(void)
 {
@@ -189,7 +188,7 @@ static void gacha_anim_tick(void)
         }
         gacha_anim_render();
     }
-    else if (now >= gc_hold_end)
+    else if ((int32_t)(now - gc_hold_end) >= 0)   /* 差比较: 防 49.7 天回绕误判停摆 */
     {
         gacha_start_voices();                    /* 停留结束, 出结果 */
     }
@@ -364,7 +363,7 @@ static const coin_skill_t coin_skills[] = {
 };
 #define COIN_SKILL_N (sizeof(coin_skills) / sizeof(coin_skills[0]))
 
-/* 点数上限值(选择排序依据; 负威力按全反面=基础点计) */
+/* 点数上限值(展示用; 负威力按全反面=基础点计, 取 max(基础点, 基础点+硬币数×威力)) */
 static int16_t coin_skill_max(uint8_t idx)
 {
     const coin_skill_t *s = &coin_skills[idx];
@@ -438,21 +437,28 @@ static void coin_score_load(void)
     }
 }
 
+/* 锁内只拍快照, NVS 落盘在锁外做: 防 httpd 侧(图鉴读取)跨任务阻塞在闪存写入上 */
 static void coin_score_save(void)
 {
-    nvs_handle_t h;
+    int32_t snap[5];
     gacha_lock();
+    snap[0] = coin_score_total;
+    snap[1] = coin_score_cur;
+    snap[2] = coin_score_max;
+    snap[3] = coin_score_streak;
+    snap[4] = coin_score_streak_max;
+    gacha_unlock();
+    nvs_handle_t h;
     if (nvs_open("coin", NVS_READWRITE, &h) == ESP_OK)
     {
-        nvs_set_i32(h, "total", coin_score_total);
-        nvs_set_i32(h, "cur", coin_score_cur);
-        nvs_set_i32(h, "max", coin_score_max);
-        nvs_set_i32(h, "strk", coin_score_streak);
-        nvs_set_i32(h, "smax", coin_score_streak_max);
+        nvs_set_i32(h, "total", snap[0]);
+        nvs_set_i32(h, "cur", snap[1]);
+        nvs_set_i32(h, "max", snap[2]);
+        nvs_set_i32(h, "strk", snap[3]);
+        nvs_set_i32(h, "smax", snap[4]);
         nvs_commit(h);
         nvs_close(h);
     }
-    gacha_unlock();
 }
 
 static void coin_score_ensure(void)
@@ -472,15 +478,17 @@ static uint8_t coin_owned[COIN_SKILL_N];     /* 1=该拼点人格已抽中 */
 
 static void coin_owned_save(void)
 {
-    nvs_handle_t h;
+    uint8_t snap[COIN_SKILL_N];
     gacha_lock();
+    memcpy(snap, coin_owned, sizeof(snap));
+    gacha_unlock();
+    nvs_handle_t h;
     if (nvs_open("coin", NVS_READWRITE, &h) == ESP_OK)
     {
-        nvs_set_blob(h, "owned", coin_owned, sizeof(coin_owned));
+        nvs_set_blob(h, "owned", snap, sizeof(snap));
         nvs_commit(h);
         nvs_close(h);
     }
-    gacha_unlock();
 }
 
 static void coin_owned_load(void)
@@ -604,7 +612,7 @@ static void cbm_flip_tick(void)
     {
         return;                          /* 已停稳, 等待确认 */
     }
-    if (now >= cbm_flip_until)
+    if ((int32_t)(now - cbm_flip_until) >= 0)   /* 差比较: 防 49.7 天回绕 */
     {
         cbm_flip_until = 0;
         gacha_coin_render();             /* 定格 */
@@ -678,8 +686,20 @@ static uint8_t coin_split(const char *s, int16_t maxw, const char **l1, const ch
     {
         size_t rest = strlen(p);
         if (rest > sizeof(coin_nbuf[1]) - 1) rest = sizeof(coin_nbuf[1]) - 1;
-        memcpy(coin_nbuf[1], p, rest);
-        coin_nbuf[1][rest] = '\0';
+        /* 按完整 UTF-8 字符回退: 防第二行末尾被切出半个汉字(战斗界面乱码) */
+        size_t keep = 0, i = 0;
+        while (i < rest)
+        {
+            size_t len = 1;
+            unsigned char c = (unsigned char)p[i];
+            if ((c & 0xE0) == 0xC0) len = 2;
+            else if ((c & 0xF0) == 0xE0) len = 3;
+            if (i + len > rest) break;
+            i += len;
+            keep = i;
+        }
+        memcpy(coin_nbuf[1], p, keep);
+        coin_nbuf[1][keep] = '\0';
         *l2 = coin_nbuf[1];
         return 2;
     }
@@ -1311,6 +1331,7 @@ void GACHA_OnEvent(uint8_t evt)
                 {
                     uint8_t sel = UI_SubMenuCur();
                     if (sel >= avail_skill_n + 1) { gacha_show_sinners(); return; }  /* "退出": 回罪人选择 */
+                    if (avail_skill_n == 0) return;   /* 防御: 该罪人无已抽人格(正常流程不可达) */
                     if (sel >= avail_skill_n) sel = (uint8_t)(esp_random() % avail_skill_n);  /* "随机" */
                     cbm_me = avail_skills[sel];
                     cbm_op = (uint8_t)(esp_random() % COIN_SKILL_N);

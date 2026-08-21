@@ -1,6 +1,6 @@
 /* UI 组件: 左侧指令图标 + 右侧滚动菜单(按键4/5/6)
  * 284×76 横屏, 像素坐标
- *   - 左侧 0..138: 指令图标(主题色 UI_COLOR_ICON, 64×64)
+ *   - 左侧 0..108: 状态栏(日期/网络/电量/时钟/天气); 指令图标居中 110..173(64×64)
  *   - 右侧 140..283: 滚动菜单, 3 个槽位, 中间槽为当前功能
  * 滚动模型(与需求一致): 按下"下"键, 整体内容向下移动一格(时间→中, 计时→下);
  *   环形循环, 3 项无限滑动。
@@ -115,12 +115,13 @@ static void ui_user_save(void)
     nvs_handle_t h;
     if (nvs_open("ins2", NVS_READWRITE, &h) == ESP_OK)
     {
-        char buf[UI_USER_MAX * UI_USER_NAME_MAX] = {0};
+        char buf[UI_USER_MAX * UI_USER_NAME_MAX] = {0};   /* 20×(23B+换行)+NUL 恰好装满: 用累计写防越界 */
         uint8_t i;
-        for (i = 0; i < ui_user_n; i++)
+        size_t wp = 0;
+        for (i = 0; i < ui_user_n && wp < sizeof(buf) - 1; i++)
         {
-            if (i) strcat(buf, "\n");
-            strcat(buf, ui_user_names[i]);
+            wp += (size_t)snprintf(buf + wp, sizeof(buf) - wp, "%s%s",
+                                   wp ? "\n" : "", ui_user_names[i]);
         }
         nvs_set_str(h, "ulist", buf);
         nvs_commit(h);
@@ -225,7 +226,7 @@ static void ui_menu_items_sync(void)
     }
 }
 
-static uint8_t menu_cur = 1;                /* 当前选中项(中间槽) = 观测 */
+static uint8_t menu_cur = 1;                /* 当前选中项(中间槽) = 询问 */
 static uint8_t ui_cursor_style = UI_CURSOR_DEFAULT;
 
 /* ================= 主页面顶部状态栏(左上角): 月份-日期 / 网络 / 电量 =================
@@ -252,7 +253,8 @@ static char   ui_time_clk[12];              /* "HH:MM:SS" */
 static uint8_t ui_time_valid = 0;
 static uint8_t ui_wifi_on = 0xFF;           /* WiFi 图标状态: 0/1=已设, 0xFF=未初始化 */
 static uint8_t ui_bat_pct = 0xFF;           /* 电量: 0-100=已设, 0xFF=未初始化 */
-static char   ui_weather[24];               /* "晴 36/24" */
+static char   ui_weather[24];               /* "晴 36/24"(可能被截断的原始输入) */
+static char   ui_weather_src[sizeof(ui_weather)];  /* 最近一次输入原样(供变化判定, 见 UI_WeatherSet) */
 static uint8_t ui_weather_valid = 0;
 
 /* ================= 帧缓冲(双缓冲) =================
@@ -645,6 +647,14 @@ static void fb_draw_string(uint16_t x, int16_t y, const char *string,
             single[2] = string[i++];
             single[3] = '\0';
         }
+        else if ((string[i] & 0xF0) == 0xF0)    /* 4 字节序列: 字库无此字形, 整序列按 1 字宽画方框占位(与 ui_text_width 对齐) */
+        {
+            uint8_t k;
+            for (k = 1; k < 4 && string[i + k] != '\0'; k++) { /* 吞掉续字节(断串即止, 不过 NUL) */ }
+            single[0] = string[i];
+            i += k;
+            single[1] = '\0';
+        }
         else { i++; continue; }
 
         ui_box_keep_now = (ui_box_mode && idx == keep_idx);  /* 保留位字符画真字 */
@@ -738,8 +748,9 @@ uint16_t UI_ScrText(uint16_t x, int16_t y, const char *s, uint16_t fc, uint16_t 
 
 uint16_t UI_ScrTextCenter(int16_t y, const char *s, uint16_t fc, uint16_t bc)
 {
-    uint16_t x = (LCD_WIDTH - ui_text_width(s)) / 2;
-    fb_draw_string(x, y, s, fc, bc, 0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
+    int16_t x = (LCD_WIDTH - ui_text_width(s)) / 2;   /* 超宽串: 钳到 0 左对齐, 防负值回绕成 655xx 从屏外画起 */
+    if (x < 0) x = 0;
+    fb_draw_string((uint16_t)x, y, s, fc, bc, 0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
     return (uint16_t)ui_text_width(s);
 }
 
@@ -818,27 +829,40 @@ static void ui_time_draw_text(void)
                    0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
 }
 
-/* 把天气画进帧缓冲(不刷屏) */
-/* 天气串按像素宽截断(整字符, 不裁半个字), 防溢出到图标区(通用防御; 当前格式已不超宽) */
-static void ui_weather_clip(void)
+/* 把天气串按像素宽截断(整字符, 不裁半个字)到 dst; 不改写 ui_weather 存储(供下次变化判定) */
+static void ui_weather_clip_to(char *dst, size_t cap, const char *src)
 {
     int16_t w = 0;
-    char *p = ui_weather;
-    while (*p)
+    size_t o = 0;
+    while (*src && o < cap - 1)
     {
-        int16_t cw = (*p & 0x80) ? 16 : 8;
+        size_t len = 1, i;
+        int16_t cw = 8;
+        unsigned char c = (unsigned char)*src;
+        if (c & 0x80)
+        {
+            len = ((c & 0xE0) == 0xC0) ? 2 : ((c & 0xF0) == 0xE0) ? 3 : 1;
+            cw = 16;
+            for (i = 1; i < len; i++)   /* 残缺序列(异常数据)按单字节处理, 绝不越过 NUL 读 */
+            {
+                if (src[i] == '\0' || (src[i] & 0xC0) != 0x80) { len = 1; cw = 8; break; }
+            }
+        }
         if (UI_WEATHER_X + w + cw > UI_TIME_CLEAR_W - 2) break;
+        memcpy(dst + o, src, len);
+        o += len;
         w += cw;
-        p += (*p & 0x80) ? 3 : 1;
+        src += len;
     }
-    *p = '\0';
+    dst[o] = '\0';
 }
 
 static void ui_weather_draw_text(void)
 {
+    char clip[sizeof(ui_weather)];
+    ui_weather_clip_to(clip, sizeof(clip), ui_weather);   /* 截断过长串(3字天气词+湿度会超宽) */
     fb_fill_rect(0, UI_WEATHER_Y, UI_TIME_CLEAR_W, UI_WEATHER_H, UI_COLOR_BG);
-    ui_weather_clip();   /* 截断过长串(3字天气词+湿度会超宽) */
-    fb_draw_string(UI_WEATHER_X, UI_WEATHER_Y, ui_weather, UI_COLOR_TIME, UI_COLOR_BG,
+    fb_draw_string(UI_WEATHER_X, UI_WEATHER_Y, clip, UI_COLOR_TIME, UI_COLOR_BG,
                    0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
 }
 
@@ -887,7 +911,9 @@ void UI_BatterySet(uint8_t pct)
     fb_blit();
 }
 
-/* 更新左侧天气显示(时钟下方); 内容变化才重绘; str=NULL 表示清除 */
+/* 更新左侧天气显示(时钟下方); 内容变化才重绘; str=NULL 表示清除。
+ * 注意: 输入串可能超过显示缓冲(被截断), 变化判定用"与上次完整输入比较",
+ * 而不是和截断后的存储比较 —— 否则超长串每次调用都判"不同"而每帧全屏重绘刷屏 */
 void UI_WeatherSet(const char *str)
 {
     if (!str)
@@ -900,10 +926,12 @@ void UI_WeatherSet(const char *str)
         }
         return;
     }
-    if (ui_weather_valid && strcmp(ui_weather, str) == 0)
+    if (ui_weather_valid && strncmp(ui_weather_src, str, sizeof(ui_weather_src) - 1) == 0)
     {
         return;
     }
+    strncpy(ui_weather_src, str, sizeof(ui_weather_src) - 1);
+    ui_weather_src[sizeof(ui_weather_src) - 1] = '\0';
     strncpy(ui_weather, str, sizeof(ui_weather) - 1);
     ui_weather[sizeof(ui_weather) - 1] = '\0';
     ui_weather_valid = 1;
@@ -930,8 +958,10 @@ static int16_t ui_text_width(const char *s)
         {
             uint8_t len = 1;
             if ((*p & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) len = 2;
-            else if ((*p & 0xE0) == 0xE0 && (p[1] & 0xC0) == 0x80
+            else if ((*p & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80
                      && (p[2] & 0xC0) == 0x80) len = 3;
+            else if ((*p & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80
+                     && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) len = 4;   /* 4字节: 整序列按 1 字宽 */
             w += 16;
             p += len;
         }

@@ -45,7 +45,7 @@ uint8_t INS_Font(void);                  /* 破译字号: 0=16 1=24 2=32px */
 void INS_SetFont(uint8_t f);             /* 设破译字号并保存(NVS "ins2"/"fnt"; 行数自动匹配) */
 /* 指令库(WEB 配置): 取当前列表 / 用 '\n' 分隔文本重建并持久化 */
 const char *const *INS_Presets(uint8_t *count);
-void INS_PresetsFromText(const char *text);
+uint8_t INS_PresetsFromText(const char *text);   /* 重建并持久化; 1=成功 0=失败(已回滚到上次持久化) */
 void INS_Tick(void);                    /* 推进动画 + 蜂鸣, 每主循环调用一次 */
 uint8_t INS_Finished(void);             /* 1=本次破译已完成(全文已显示) */
 void INS_Exit(void);                    /* 提前退出破译, 回到 UI 主界面 */

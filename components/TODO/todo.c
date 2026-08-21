@@ -13,12 +13,12 @@
 #include <stdio.h>
 
 #define TODO_MAX   12          /* 最大待办条数(UI 子菜单最多 12 项+退出) */
-#define TODO_TEXT_MAX_W 264    /* 列表显示最大宽 px(284 内留边) */
+#define TODO_TEXT_MAX_W 244    /* 列表文本最大宽 px(284 屏宽 - "PASS " 前缀 40px - 余量; 保证整项不出屏且 UTF-8 截断不切字) */
 
 typedef struct {
     char text[TODO_TEXT_MAX];  /* 待办文本 */
     uint8_t done;              /* 1=已PASS */
-    uint32_t created;          /* 创建时刻(开机秒, 仅备将来显示) */
+    uint32_t created;          /* 创建时刻(ms). 保留占位: 与 NVS 旧 blob 布局兼容(删掉会使旧数据读不回), 未来展示用 */
 } todo_item_t;
 
 static todo_item_t todo[TODO_MAX];
@@ -98,13 +98,19 @@ uint8_t TODO_Done(uint8_t i)
     return (i < todo_count()) ? todo[i].done : 0;
 }
 
-/* ================= 网页操作 ================= */
-void TODO_Toggle(uint8_t i)
+/* ================= 网页操作 =================
+ * redraw=1: 设备端(ui_task)调用, 列表就地刷新; redraw=0: 网页(httpd 任务)调用,
+ * 只改数据不绘屏 —— 绘制统一在 ui_task(web_dirty 触发 TODO_Enter 重建列表), 防帧缓冲跨任务撕裂 */
+void TODO_Toggle(uint8_t i, uint8_t redraw)
 {
     uint8_t cur;
     if (i >= todo_count()) return;
     todo[i].done = !todo[i].done;
     todo_save();
+    if (!redraw)
+    {
+        return;
+    }
     cur = UI_SubMenuCur();
     if (todo_busy && cur == i)   /* 界面正显示该项: 就地刷新文字(保选中) */
     {
@@ -184,7 +190,7 @@ uint8_t TODO_Key(uint8_t up, uint8_t ok, uint8_t down, uint8_t lng)
     if (down) { UI_SubMenuScroll(-1); return TODO_KEY_NONE; }
     if (lng)                             /* 长按OK: PASS/恢复(在"退出"上忽略) */
     {
-        if (cur < n) TODO_Toggle(cur);
+        if (cur < n) TODO_Toggle(cur, 1);   /* 设备端: 就地刷新 */
         return TODO_KEY_NONE;
     }
     if (ok)

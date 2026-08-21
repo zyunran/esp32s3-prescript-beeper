@@ -42,8 +42,9 @@ static const char *TAG = "WEB";
  * 配置页以掩码占位, 保存时遇到该串视为"保持不变", 不覆盖已存凭据 */
 #define WEB_SECRET_MASK "********"
 
-/* 配置已改标志: 网页保存配置/待办后置 1, ui_task 检测后重绘主界面应用(实时生效+绘制统一避免并发) */
-static uint8_t web_dirty = 0;
+/* 配置已改标志: 网页保存配置/待办后置 1, ui_task 检测后重绘主界面应用(实时生效+绘制统一避免并发).
+ * httpd 任务写、ui_task 读/清: volatile 防跨核缓存(单字节写读本原子) */
+static volatile uint8_t web_dirty = 0;
 uint8_t WEB_ConfigDirty(void)      { return web_dirty; }
 void    WEB_ConfigDirtyClear(void) { web_dirty = 0; }
 
@@ -123,7 +124,7 @@ static int web_utf8_valid(const char *s, size_t max_len)
         if (*p < 0x80) { p++; left--; continue; }
         if ((*p & 0xE0) == 0xC0) { if (*p < 0xC2) return 0; need = 2; }
         else if ((*p & 0xF0) == 0xE0) need = 3;
-        else if ((*p & 0xF8) == 0xF0) need = 4;
+        else if ((*p & 0xF8) == 0xF0) return 0;   /* 设备显示链按 ≤3 字节: 4 字节(emoji 等)一律拒绝 */
         else return 0;
         if (left < need) return 0;
         for (i = 1; i < need; i++)
@@ -134,11 +135,6 @@ static int web_utf8_valid(const char *s, size_t max_len)
         {
             if (*p == 0xE0 && p[1] < 0xA0) return 0;
             if (*p == 0xED && p[1] > 0x9F) return 0;
-        }
-        else if (need == 4)
-        {
-            if (*p == 0xF0 && p[1] < 0x90) return 0;
-            if (*p == 0xF4 && p[1] > 0x8F) return 0;
         }
         p += need;
         left -= need;
@@ -292,7 +288,7 @@ static const char web_page[] =
 "document.getElementById('msg').textContent=j.ok?'✓ 已保存':'保存失败';}"
 "async function beep(){await fetch('/api/beep',{method:'POST'});}"
 "async function reboot(){if(confirm('确定重启 BB 机?')){await fetch('/api/reboot',{method:'POST'});document.getElementById('msg').textContent='重启中…';}}"
-"async function clrwifi(){if(confirm('清除已存 WiFi 并回到配网模式?')){await fetch('/api/clearwifi',{method:'POST'});location.reload();}}"
+"async function clrwifi(){if(!confirm('清除已存 WiFi 并回到配网模式?'))return;try{await fetch('/api/clearwifi',{method:'POST'});}catch(e){}document.getElementById('msg').textContent='已清除,请连接 ESP32ODERAP 重新配网';}"
 "document.getElementById('scanwifi').onclick=async function(){let b=this;b.disabled=1;b.textContent='扫描中…';"
 "let l=document.getElementById('wifilist');l.innerHTML='';l.style.display='block';"
 "try{let j=await (await fetch('/api/scan',{method:'POST'})).json();"
@@ -478,7 +474,7 @@ static int web_apply_ins(cJSON *root)
     cJSON *ins = cJSON_GetObjectItem(root, "ins");
     if (!ins) return 1;
     if (!cJSON_IsString(ins) || !web_ins_text_valid(ins->valuestring)) return 0;
-    INS_PresetsFromText(ins->valuestring);
+    if (!INS_PresetsFromText(ins->valuestring)) return 0;   /* 落盘失败: 整体保存按失败处理 */
     return 1;
 }
 
@@ -593,13 +589,15 @@ static int web_apply_net(cJSON *root)
     if (key)
     {
         if (!cJSON_IsString(key) || !web_utf8_valid(key->valuestring, 47)) return 0;
-        if (strcmp(key->valuestring, WEB_SECRET_MASK) != 0)
-            NET_SetKey(key->valuestring);   /* 掩码=保持原 key; 空=不配置天气 */
+        /* 掩码 = 保持原 key; 唯一例外: 原 key 恰好就是掩码串时按字面接受(消除歧义) */
+        if (strcmp(key->valuestring, WEB_SECRET_MASK) != 0 || strcmp(NET_GetKey(), WEB_SECRET_MASK) == 0)
+            NET_SetKey(key->valuestring);   /* 空=不配置天气 */
     }
     if (ssid)
     {
-        /* 掩码密码=保持不变: 仅当用户明确输入新密码(覆盖)时才改; 空=清空密码(开放网络) */
-        if (strcmp(pass, WEB_SECRET_MASK) != 0) NET_SetWifi(ssid, pass);
+        /* 掩码密码 = 保持不变; 唯一例外: 已存密码恰好是掩码串时按字面接受(消除歧义) */
+        if (strcmp(pass, WEB_SECRET_MASK) != 0 || strcmp(NET_GetPass(), WEB_SECRET_MASK) == 0)
+            NET_SetWifi(ssid, pass);
         else NET_SetWifi(ssid, NET_GetPass());   /* 密码未动: 沿用已存密码(兼容只换 SSID) */
     }
     return 1;
@@ -827,22 +825,19 @@ static int web_cfg_validate(cJSON *root)
     return 1;
 }
 
-static esp_err_t web_api_cfg_post(httpd_req_t *req)
+/* 接收请求体(统一样板): 长度上限校验 + malloc + 循环 recv + NUL 结尾; 失败返回 NULL */
+static char *web_recv_body(httpd_req_t *req, int max_len)
 {
-    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     int total = req->content_len, recvd = 0;
     char *buf;
-
-    if (total <= 0 || total > 32768)   /* 含指令库+答案文本框+闹钟, 上限提到 32KB */
+    if (total <= 0 || total > max_len)
     {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad len");
-        return ESP_OK;
+        return NULL;
     }
     buf = malloc((size_t)total + 1);
     if (!buf)
     {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
-        return ESP_OK;
+        return NULL;
     }
     while (recvd < total)
     {
@@ -850,13 +845,23 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
         if (r <= 0)
         {
             free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
-            return ESP_OK;
+            return NULL;
         }
         recvd += r;
     }
     buf[recvd] = '\0';
+    return buf;
+}
 
+static esp_err_t web_api_cfg_post(httpd_req_t *req)
+{
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    char *buf = web_recv_body(req, 32768);   /* 含指令库+答案文本框+闹钟, 上限 32KB */
+    if (!buf)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
+        return ESP_OK;
+    }
     cJSON *root = cJSON_Parse(buf);
     free(buf);
     if (!root)
@@ -1007,32 +1012,13 @@ static esp_err_t web_api_todo_get(httpd_req_t *req)
 static esp_err_t web_api_todo_post(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
-    int total = req->content_len, recvd = 0;
-    char *buf;
+    char *buf = web_recv_body(req, 2048);
     cJSON *root, *op, *text, *idx;
-    if (total <= 0 || total > 2048)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad len");
-        return ESP_OK;
-    }
-    buf = malloc((size_t)total + 1);
     if (!buf)
     {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
         return ESP_OK;
     }
-    while (recvd < total)
-    {
-        int r = httpd_req_recv(req, buf + recvd, (size_t)(total - recvd));
-        if (r <= 0)
-        {
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv");
-            return ESP_OK;
-        }
-        recvd += r;
-    }
-    buf[total] = '\0';
     root = cJSON_Parse(buf);
     free(buf);
     if (!root)
@@ -1069,7 +1055,7 @@ static esp_err_t web_api_todo_post(httpd_req_t *req)
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad idx");
             return ESP_OK;
         }
-        TODO_Toggle((uint8_t)idx->valueint);
+        TODO_Toggle((uint8_t)idx->valueint, 0);   /* 网页触发: 不绘屏(绘制归 ui_task, web_dirty 刷新) */
     }
     else if (strcmp(op->valuestring, "del") == 0)
     {
@@ -1100,7 +1086,7 @@ static esp_err_t web_api_todo_post(httpd_req_t *req)
 }
 
 /* ================= 下发指令(网页 -> 设备破译显示) ================= */
-static char web_pending_cmd[96];   /* 下发指令上限 96B: 避免拼"致使用者名"后超出破译缓冲(130B)截断 */
+static char web_pending_cmd[96];   /* 下发指令上限 96B: 加"致{使用者}:"(≤24B)后须落在 INS_ShowIns 合成缓冲(138B)内 */
 static volatile uint8_t web_pending_flag = 0;
 /* 缓冲由 httpd 任务写(web_api_send)、ui_task 读(WEB_TakeCmd): 自旋锁串行化(S5) */
 static portMUX_TYPE web_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -1109,32 +1095,13 @@ static portMUX_TYPE web_mux = portMUX_INITIALIZER_UNLOCKED;
 static esp_err_t web_api_send(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
-    int total = req->content_len, recvd = 0;
-    char *buf;
+    char *buf = web_recv_body(req, 2048);
     cJSON *root, *cmd;
-    if (total <= 0 || total > 2048)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad len");
-        return ESP_OK;
-    }
-    buf = malloc((size_t)total + 1);
     if (!buf)
     {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
         return ESP_OK;
     }
-    while (recvd < total)
-    {
-        int r = httpd_req_recv(req, buf + recvd, (size_t)(total - recvd));
-        if (r <= 0)
-        {
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv");
-            return ESP_OK;
-        }
-        recvd += r;
-    }
-    buf[total] = '\0';
     root = cJSON_Parse(buf);
     free(buf);
     if (!root)
@@ -1205,26 +1172,12 @@ static esp_err_t web_api_reboot(httpd_req_t *req)
 static esp_err_t web_api_user_add(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
-    int total = req->content_len, recvd = 0;
-    char *buf;
-    if (total <= 0 || total > 512)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad len");
-        return ESP_OK;
-    }
-    buf = malloc((size_t)total + 1);
+    char *buf = web_recv_body(req, 512);
     if (!buf)
     {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
         return ESP_OK;
     }
-    while (recvd < total)
-    {
-        int r = httpd_req_recv(req, buf + recvd, (size_t)(total - recvd));
-        if (r <= 0) { free(buf); httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_OK; }
-        recvd += r;
-    }
-    buf[recvd] = '\0';
     cJSON *root = cJSON_Parse(buf);
     free(buf);
     uint8_t ok = 0;

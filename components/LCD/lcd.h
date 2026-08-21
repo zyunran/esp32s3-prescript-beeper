@@ -17,7 +17,10 @@
 #define LCD_RST(x)  x ? gpio_set_level(GPIO_NUM_10,1) : gpio_set_level(GPIO_NUM_10,0)
 #define LCD_DC(x)   x ? gpio_set_level(GPIO_NUM_11,1) : gpio_set_level(GPIO_NUM_11,0)
 #define LCD_CS(x)   x ? gpio_set_level(GPIO_NUM_9,1) : gpio_set_level(GPIO_NUM_9,0)
-#define LCD_BLK(x)  x ? gpio_set_level(GPIO_NUM_12,1) : gpio_set_level(GPIO_NUM_12,0)
+/* 注意: LCD 全接口(含背光 lcd_on/lcd_off)是单写者约定 —— 只允许 ui_task 调用,
+ * 任何 httpd/其他任务直写帧缓冲或 GPIO 都会撕裂画面(见审查 #16) */
+
+/* 本屏显存 284×76, 分辨率为 284x76 横屏 */
 
 #define WHITE           0xFFFF      /* 白色 */
 #define BLACK           0x0000      /* 黑色 */

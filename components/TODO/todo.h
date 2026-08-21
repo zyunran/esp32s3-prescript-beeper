@@ -24,7 +24,7 @@ const char *TODO_Text(uint8_t i);              /* 第i条文本(须 i<TODO_Count
 uint8_t TODO_Done(uint8_t i);                  /* 1=已PASS */
 const char *TODO_CurText(void);                /* 当前选中待办文本(在"退出"上=NULL) */
 /* 网页用 */
-void TODO_Toggle(uint8_t i);                   /* 切换 PASS/恢复 */
+void TODO_Toggle(uint8_t i, uint8_t redraw);    /* 切换 PASS/恢复; redraw=1 就地刷新列表(仅 ui_task 语境), 0=只改数据(网页) */
 void TODO_Del(uint8_t i);                      /* 删除第i条(后续前移) */
 void TODO_Clear(void);                         /* 清空全部 */
 

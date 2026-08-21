@@ -23,7 +23,6 @@ static SemaphoreHandle_t snd_sem;       /* 唤醒播放任务 */
  *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次 */
 static const int16_t * volatile snd_pcm;  /* 待播缓冲 */
 static volatile uint32_t snd_frames;
-static volatile uint8_t  snd_busy;
 static volatile uint8_t  snd_loop;        /* 1=循环播放直到 SOUND_Stop */
 static volatile uint16_t snd_gen;         /* 播放代次: Play/Stop 时递增, 任务据此即时切换/停止 */
 static volatile uint8_t  snd_vol = 100;   /* 音量 0~100(默认满; WEB/设置任务可改, 播放任务缩放时读) */
@@ -75,7 +74,7 @@ static void snd_task(void *arg)
                 written += w;
             }
         } while (snd_loop && gen == snd_gen);
-        snd_busy = 0;
+        /* 本帧播完或代次已变: 回到信号量等待, 不再引用旧缓冲 */
     }
 }
 
@@ -133,7 +132,7 @@ void SOUND_SetVolume(uint8_t percent)
     gpio_set_level(SOUND_SD, (snd_vol > 0) ? 1 : 0);
 }
 
-void SOUND_Play(const int16_t *pcm, uint32_t frames)
+void SOUND_Play(const int16_t *pcm, uint32_t frames)   /* 一次性播放(当前调用方未用; 保留: 将来短音效/提示音入口) */
 {
     if (!snd_sem || !pcm || frames == 0)
     {
@@ -143,7 +142,6 @@ void SOUND_Play(const int16_t *pcm, uint32_t frames)
     snd_pcm = pcm;
     snd_frames = frames;
     snd_loop = 0;
-    snd_busy = 1;
     xSemaphoreGive(snd_sem);
 }
 
@@ -157,13 +155,11 @@ void SOUND_PlayLoop(const int16_t *pcm, uint32_t frames)
     snd_pcm = pcm;
     snd_frames = frames;
     snd_loop = 1;
-    snd_busy = 1;
     xSemaphoreGive(snd_sem);
 }
 
 void SOUND_Stop(void)
 {
     snd_gen++;      /* 代次+1: 播放任务立即中止当前缓冲 */
-    snd_busy = 0;
 }
 

@@ -86,6 +86,15 @@ static uint8_t rtc_u2bcd(uint8_t v) { return (uint8_t)(((v / 10) << 4) | (v % 10
 /* 高/低 4 位都 <=9 才算合法 BCD */
 static uint8_t rtc_bcd_ok(uint8_t v) { return ((v & 0x0F) <= 9) && ((v & 0xF0) <= 0x90); }
 
+/* 月天数(DS1302 年份 00-99 = 2000-2099: 该区间内 4 年一闰即完整有效, 无世纪例外) */
+static uint8_t rtc_month_days(uint8_t mon, uint8_t year2)
+{
+    static const uint8_t md[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (mon < 1 || mon > 12) return 0;
+    if (mon == 2 && (year2 % 4) == 0) return 29;
+    return md[mon - 1];
+}
+
 /* 突发读 + 校验: 全部字段 BCD 合法且范围合理 + 秒 CH=0(振荡器运行) + 时 24h 制(bit7=0) */
 uint8_t DS1302_Read(struct tm *t)
 {
@@ -116,6 +125,7 @@ uint8_t DS1302_Read(struct tm *t)
             if (sec > 59 || min > 59 || hour > 23) ok = 0;
             if (mday < 1 || mday > 31) ok = 0;
             if (mon < 1 || mon > 12) ok = 0;
+            if (ok && mday > rtc_month_days(mon, year)) ok = 0;   /* 月天数组合(防 2/30、4/31 之类非法日期) */
         }
         if (!ok)
         {
@@ -155,15 +165,12 @@ void DS1302_Write(const struct tm *t)
     rtc_tx_byte(0x00);             /* WP=0 允许写 */
     rtc_end();
 
-    /* 星期由日期归一化(mktime 按 tm_year/mon/mday 重算 tm_wday):
-     * 防御调用方给的 tm_wday 非法/未填(-1), 避免写坏 DS1302 星期寄存器 */
+    /* 星期由日期归一化: mktime 按 tm_year/mon/mday 重算 tm_wday(结果必为 0..6),
+     * 避免调用方给的 tm_wday 未填(-1)/非法写坏 DS1302 星期寄存器 */
     struct tm tn = *t;
     tn.tm_isdst = -1;
     mktime(&tn);
-    if (tn.tm_wday < 0 || tn.tm_wday > 6)
-    {
-        tn.tm_wday = (t->tm_wday >= 0 && t->tm_wday <= 6) ? t->tm_wday : 0;
-    }
+    (void)tn.tm_wday;   /* 已由 mktime 归一, 直接使用下方 tn.tm_wday */
 
     buf[0] = (uint8_t)(rtc_u2bcd((uint8_t)t->tm_sec) & 0x7F);          /* 清 CH 起振 */
     buf[1] = rtc_u2bcd((uint8_t)t->tm_min);

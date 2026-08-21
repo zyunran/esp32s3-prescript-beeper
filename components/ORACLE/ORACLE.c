@@ -105,7 +105,7 @@ uint8_t ORACLE_Due(void)
     if (!ora_armed || n != ora_n || win != ora_win || ora_mday() != ora_day)
     {
         ora_armed = 1;
-        ora_n = n;
+        ora_n = (n > 9) ? 9 : n;   /* 与 ora_schedule 的数组容量一致: 防设置放开上限后越界读 */
         ora_win = win;
         ora_day = ora_mday();
         ora_schedule();

@@ -421,7 +421,7 @@ static void on_event(uint8_t evt)
                     uint8_t on = NET_ApToggle();
                     if (on)
                     {
-                        char m[44];   /* "热点已开 <SSID>/<8位随机密码>" */
+                        char m[68];   /* "热点已开 <SSID>/<8位随机密码>": SSID≤32B+密码8B+中文前后缀, 留足余量 */
                         snprintf(m, sizeof(m), "热点已开 %s/%s", NET_GetApSsid(), NET_GetApPass());
                         UI_FullScreen("开启配网", m);
                     }
@@ -623,6 +623,7 @@ static void on_event(uint8_t evt)
 #define STANDBY_TICK_US  50000ULL    /* 定时唤醒片长: 50ms(按键响应≤50ms, 与功耗折中; 原200ms唤醒偏慢) */
 
 static uint32_t last_act;   /* 距上次操作时刻(ms), 提为全局供待机唤醒处理 */
+static uint32_t standby_reenter_at = 0;   /* 按键唤醒后的待机冷却截止时刻(防按住时反复进退待机空转) */
 static uint8_t  scr_on = 1; /* 屏幕背光状态(1=亮) */
 
 /* 任一按键按下(低电平) */
@@ -638,6 +639,7 @@ static void standby_enter(void)
     uint8_t alarm = 0;
     printf("[STBY] enter\n");
     NET_WifiStop();
+    net_conn_pending = 0;   /* 会话被待机强断: 不再等联网结果(防唤醒后误弹"未连上") */
     /* 待机挂起按键轮询与六轴采样任务: 否则 20ms/30ms 轮询持续唤醒 CPU, 削弱浅睡眠省电;
      * 唤醒判断改由本任务直接读 GPIO(standby_btn_pressed), 挂起不影响响应 */
     if (input_task_h) vTaskSuspend(input_task_h);
@@ -653,8 +655,9 @@ static void standby_enter(void)
         }
     }
     MPU_Resume();                                  /* 恢复六轴采样 */
-    if (input_task_h) vTaskResume(input_task_h);   /* 恢复按键轮询(唤醒按键事件随之入队) */
+    if (input_task_h) vTaskResume(input_task_h);   /* 恢复按键轮询: 唤醒键的按下沿在恢复后被检测入队(长按判定从按下时刻起算) */
     printf("[STBY] wake %s\n", alarm ? "alarm" : "btn");
+    if (!alarm) standby_reenter_at = (uint32_t)(esp_timer_get_time() / 1000) + 400;   /* 按键唤醒: 冷却 400ms, 防键还按住时反复进出待机 */
     /* 路径1 完全按需: 唤醒不再自动重连 WiFi(省电+零暴露面). 需要联网时用户按 联网->连接网络 */
     if (alarm)
     {
@@ -701,7 +704,11 @@ static void ui_task(void *arg)
                 }
                 else
                 {
-                    if (ui_state != ST_INS && ui_state != ST_INFO) ui_push(ST_INS);   /* 返回时恢复原页面 */
+                    if (ui_state != ST_INS && ui_state != ST_INFO)
+                    {
+                        if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
+                        ui_push(ST_INS);   /* 返回时恢复原页面 */
+                    }
                     INS_ShowIns(wcmd);   /* 网页下发: 无"致X:"自动加致当前使用者 */
                 }
                 lcd_on();
@@ -748,16 +755,24 @@ static void ui_task(void *arg)
                 if (NET_WifiOk())
                 {
                     net_conn_pending = 0;
-                    if (ui_state != ST_INS) ui_push(ST_INS);   /* 已退回就重开一屏, 否则就地换 */
+                    if (ui_state != ST_INS)
+                    {
+                        if (ui_state != ST_MAIN && ui_state != ST_SUB && ui_state != ST_INFO) ui_to_main();
+                        ui_push(ST_INS);   /* 已退回就重开一屏, 否则就地换 */
+                    }
                     INS_Show("已连接");
                     lcd_on();
                     scr_on = 1;
                     last_act = now;
                 }
-                else if (now >= net_conn_deadline)
+                else if ((int32_t)(now - net_conn_deadline) >= 0)   /* 差比较: 防 uptime 49.7d 回绕误判超时 */
                 {
                     net_conn_pending = 0;
-                    if (ui_state != ST_INS) ui_push(ST_INS);
+                    if (ui_state != ST_INS)
+                    {
+                        if (ui_state != ST_MAIN && ui_state != ST_SUB && ui_state != ST_INFO) ui_to_main();
+                        ui_push(ST_INS);
+                    }
                     INS_Show("未连上");
                     lcd_on();
                     scr_on = 1;
@@ -802,11 +817,12 @@ static void ui_task(void *arg)
             }
         }
 
-        /* 按需联网会话(路径1): 已连网但按键/网页都静默超时 -> 自动断(省电+缩暴露面).
-         * 手动断: 再按 联网->连接网络. 按键和网页请求(NET_Touch)都会续期, 正常使用不误断. */
-        if (NET_WifiOk() && (now - last_act) >= NET_SESSION_IDLE_MS &&
+        /* 按需联网会话(路径1): 会话进行中但按键/网页都静默超时 -> 自动断(省电+缩暴露面).
+         * 以"射频开"为前置(连不上也算会话, 防密码错/无信号时射频空开); 按键与网页请求(NET_Touch)续期. */
+        if (NET_SessionOn() && (now - last_act) >= NET_SESSION_IDLE_MS &&
             NET_SessionIdleMs() >= NET_SESSION_IDLE_MS)
         {
+            net_conn_pending = 0;   /* 会话被自动结束: 取消联网结果挂起(防误弹"未连上") */
             NET_SessionEnd();
         }
 
@@ -941,8 +957,8 @@ static void ui_task(void *arg)
         }
         INS_BeepTick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
 
-        /* 待机: 息屏后进浅睡眠(倒计时进行中不睡, 需精确走秒) */
-        if (scr_on == 0 && ui_state != ST_TIMER)
+        /* 待机: 息屏后进浅睡眠(倒计时进行中不睡, 需精确走秒; 按键唤醒后有 400ms 冷却) */
+        if (scr_on == 0 && ui_state != ST_TIMER && now >= standby_reenter_at)
         {
             standby_enter();
         }
@@ -1025,8 +1041,12 @@ void app_main(void)
 
     key_q = xQueueCreate(8, sizeof(uint8_t));
     MPU_Start(key_q);          /* 启动六轴采样任务(摇动->按键事件入队) */
-    xTaskCreate(input_task, "input", 2048, NULL, 5, &input_task_h);
-    xTaskCreate(ui_task,    "ui",    4096, NULL, 3, NULL);
+    if (xTaskCreate(input_task, "input", 2048, NULL, 5, &input_task_h) != pdPASS ||
+        xTaskCreate(ui_task,    "ui",    4096, NULL, 3, NULL) != pdPASS)
+    {
+        printf("[FATAL] task create failed, restart\n");   /* 无界面半活状态最难排查: 直接重启 */
+        esp_restart();
+    }
 
     vTaskDelete(NULL);   /* 主任务结束, 交由两个工作任务 */
 }

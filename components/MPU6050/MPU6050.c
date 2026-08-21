@@ -204,7 +204,7 @@ static uint8_t mpu_probe_addr(void)
     {
         mpu_addr_w = (uint8_t)(MPU_ADDR_W | (a ? 0x02 : 0x00));   /* 0xD0 / 0xD2 */
         mpu_addr_r = (uint8_t)(mpu_addr_w | 0x01);
-        if (mpu_read_reg(REG_WHO_AM_I, &id) == 0 && id == 0x68)
+        if (mpu_read_reg(REG_WHO_AM_I, &id) == 0 && (id & 0xFE) == 0x68)   /* WHO_AM_I bit0 随 AD0(0x68/0x69) */
         {
             return 1;
         }
@@ -234,7 +234,7 @@ static void mpu_probe(void)
     mpu_write_reg(REG_ACCEL_CONFIG, 0x00);    /* 加速度 ±2g */
 
     /* 配置生效校验: 读回 PWR_MGMT_1 应为 0x01(非休眠 0x40) */
-    if (mpu_read_reg(REG_WHO_AM_I, &id) != 0 || id != 0x68) mpu_ok = 0;
+    if (mpu_read_reg(REG_WHO_AM_I, &id) != 0 || (id & 0xFE) != 0x68) mpu_ok = 0;
     mpu_read_reg(REG_PWR_MGMT_1, &pm1);
     if (pm1 & 0x40) mpu_ok = 0;
 
@@ -298,7 +298,6 @@ float MPU_Yaw(void)    { return f_yaw; }
 #define SHAKE_G        0.8f                  /* 平移竖直加速度触发阈值 g */
 #define SHAKE_THRESH   ((int32_t)(SHAKE_G * ACCEL_G))
 #define SHAKE_GYRO     80.0f                 /* 转腕角速度阈值 °/s(实测本机左右摇俯仰 gy 约100, 80 可稳定触发) */
-#define SHAKE_MIN_VERT (0.10f * ACCEL_G)     /* 转腕判向所需最小竖直分量 g */
 #define SHAKE_COOLDOWN 350u                  /* 两次摇动最小间隔 ms */
 /* 归位锁: 触发后需设备静止片刻才允许再次触发, 防止后摇归位(反向回摆)误触发 */
 #define STILL_VERT     (0.25f * ACCEL_G)     /* 静止判定: 竖直加速度阈值 g */
@@ -313,7 +312,7 @@ static QueueHandle_t mpu_q = NULL;
 static TaskHandle_t  mpu_task_h = NULL;       /* 采样任务句柄 */
 static volatile uint8_t mpu_paused = 0;       /* 待机暂停标志(任务自查, 不打断 I2C 事务) */
 static uint32_t mpu_last_retry = 0;           /* 探测重试时刻(全局: 唤醒后强制立即重探测) */
-static uint8_t mpu_shake_en = 1;              /* 摇动检测开关(设置可关, 只禁摇动) */
+static volatile uint8_t mpu_shake_en = 1;     /* 摇动检测开关(设置可关, 只禁摇动): 采样任务与设置侧跨任务, volatile */
 static volatile uint8_t mpu_shake_dir = 0;    /* 最近摇动方向: 1=上 2=下 3=左 4=右(平衡页反馈) */
 static volatile uint32_t mpu_shake_at = 0;    /* 摇动时刻 ms */
 
@@ -473,7 +472,7 @@ static uint8_t mpu_sample(void)
 
         f_roll  = FILTER_A * f_roll  + (1.0f - FILTER_A) * roll_a;
         f_pitch = FILTER_A * f_pitch + (1.0f - FILTER_A) * pitch_a;
-        f_yaw   = FILTER_A * f_yaw;          /* yaw 仅陀螺积分 */
+        f_yaw   = FILTER_A * f_yaw;          /* yaw: 泄漏积分(每帧×0.9, 时间常数约 0.3s): 静止自动回零, 非真实累计航向 */
         if (f_yaw > 180.0f) f_yaw -= 360.0f; /* 显示范围 [-180,180) */
         else if (f_yaw < -180.0f) f_yaw += 360.0f;
     }

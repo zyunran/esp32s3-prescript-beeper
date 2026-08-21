@@ -53,7 +53,7 @@ typedef struct {
 #define GACHA_COLOR_BOX   UI_COLOR_FRAME   /* 空方框边框(柔和绿) */
 #define GACHA_COLOR_LINE  UI_COLOR_ICON    /* 扫描线(柔和青) */
 
-/* ================= API(非阻塞, 由 RTOS 主任务驱动) =================
+/* ================= API(由 RTOS 主任务驱动, 不阻塞界面; httpd 侧图鉴接口首次调用含 NVS 加载) =================
  * 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN/EVT_LONG_OK 一致: 1=上 2=确认 3=下 4=OK长按
  * 流程: Enter 渲染"十连/拼点/单抽/积分/图鉴/退出"子菜单 -> OnEvent 选十连进动画
  *       -> Tick 推进扫描/语音/结果滚动 -> 结果确认回子菜单, 子菜单"退出"回主界面 */
@@ -62,7 +62,7 @@ void    GACHA_ForceExit(void);   /* 强制退出(OK 长按返回主界面) */
 void    GACHA_OnEvent(uint8_t evt); /* 按键事件(1=UP 2=OK 3=DOWN) */
 void    GACHA_Tick(void);        /* 推进抽卡动画/语音/结果滚动, 每主循环调用 */
 uint8_t GACHA_Busy(void);        /* 1=抽卡界面运行中 */
-void    GACHA_Init(void);        /* 创建抽卡/图鉴跨任务互斥量(app_main 调用, 见 GACHA.c M2) */
+void    GACHA_Init(void);        /* 创建抽卡/图鉴跨任务递归互斥量, 须在 WEB_Init 之前调用 */
 
 /* ================= 图鉴/拼点人格表访问(网页图鉴用; 调用会加载 NVS 已抽标记) ================= */
 uint16_t GACHA_CoinTotal(void);               /* 人格总数(120) */

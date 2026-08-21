@@ -34,10 +34,10 @@ static uint32_t tim_now(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* 剩余时长 ms(含快进补偿; int64 避免下溢/回绕) */
+/* 剩余时长 ms(含快进补偿; int64 避免下溢/回绕: 须先扩宽再相减, 防 uint32 差先回绕) */
 static int64_t tim_remain(void)
 {
-    return (int64_t)tim_dur - ((int64_t)(tim_now() - tim_start) + (int64_t)tim_fast_ms);
+    return (int64_t)tim_dur - ((int64_t)tim_now() - (int64_t)tim_start + (int64_t)tim_fast_ms);
 }
 
 /* ---- 绘制小工具 ---- */
@@ -100,11 +100,12 @@ static void tim_title_parse(const char *s)
         {
             len = 1;
         }
-        for (k = 0; k < len; k++) tim_title_ch[tim_title_n][k] = s[i + k];
-        tim_title_ch[tim_title_n][len] = '\0';
+        for (k = 0; k < len && s[i + k] != '\0'; k++) tim_title_ch[tim_title_n][k] = s[i + k];
+        tim_title_ch[tim_title_n][k] = '\0';
         tim_title_w[tim_title_n] = (s[i] & 0x80) ? 16 : 8;
         tim_title_n++;
-        i += len;
+        if (k == 0) break;        /* 串已尽(截断多字节): 不再前推 */
+        i += k;
     }
 }
 
@@ -211,7 +212,7 @@ static void tim_render_set(void)
     UI_ScrBlit();
 }
 
-/* 确认瞬间: 标题立即真字, 角光标向四周大扩散 */
+/* 确认瞬间: 标题立即真字 + 画一帧向外扩散 e=6 的角框(200ms 过渡动画期间不再逐帧推进) */
 static void tim_render_set_confirm(void)
 {
     int16_t cx = LCD_WIDTH / 2;
