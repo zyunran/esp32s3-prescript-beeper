@@ -13,6 +13,8 @@
 #include "nvs_flash.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -398,6 +400,14 @@ static uint8_t  cbm_last_res;              /* 上一轮结果: 0=无 1=我胜 2=
 static uint32_t cbm_flip_until;            /* 翻转动画结束时刻(0=已停稳) */
 static uint32_t cbm_flip_last;             /* 翻转帧时刻 */
 
+/* ---- 拼点积分/图鉴跨任务互斥(清单 M2) ----
+ * 网页图鉴 GACHA_Coin* 在 httpd 任务读 coin_owned/score, 抽卡在 ui_task 写:
+ * 用递归互斥量串行化(内部 ensure/save 互相嵌套, 故用 Recursive). GACHA_Init 在 app_main 创建. */
+static SemaphoreHandle_t gacha_mux = NULL;
+void GACHA_Init(void) { gacha_mux = xSemaphoreCreateRecursiveMutex(); }
+static void gacha_lock(void)   { if (gacha_mux) xSemaphoreTakeRecursive(gacha_mux, portMAX_DELAY); }
+static void gacha_unlock(void) { if (gacha_mux) xSemaphoreGiveRecursive(gacha_mux); }
+
 /* ---- 拼点积分(NVS "coin" 持久化) ---- */
 static int32_t coin_score_total = 0;       /* 累计总积分(终身, 只增不减) */
 static int32_t coin_score_cur = 0;         /* 当前积分(可消费, 积分抽扣除) */
@@ -424,6 +434,7 @@ static void coin_score_load(void)
 static void coin_score_save(void)
 {
     nvs_handle_t h;
+    gacha_lock();
     if (nvs_open("coin", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_i32(h, "total", coin_score_total);
@@ -434,16 +445,19 @@ static void coin_score_save(void)
         nvs_commit(h);
         nvs_close(h);
     }
+    gacha_unlock();
 }
 
 static void coin_score_ensure(void)
 {
+    gacha_lock();
     if (!coin_score_loaded)
     {
         coin_score_loaded = 1;
         coin_score_load();
         coin_owned_load();
     }
+    gacha_unlock();
 }
 
 /* ---- 已抽中拼点人格(NVS "coin"/owned) ---- */
@@ -452,12 +466,14 @@ static uint8_t coin_owned[COIN_SKILL_N];     /* 1=该拼点人格已抽中 */
 static void coin_owned_save(void)
 {
     nvs_handle_t h;
+    gacha_lock();
     if (nvs_open("coin", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_blob(h, "owned", coin_owned, sizeof(coin_owned));
         nvs_commit(h);
         nvs_close(h);
     }
+    gacha_unlock();
 }
 
 static void coin_owned_load(void)
@@ -476,6 +492,7 @@ static void coin_owned_load(void)
 static void gacha_start_ten(void)
 {
     uint8_t i, owned_chg = 0;
+    gacha_lock();
     coin_score_ensure();
     for (i = 0; i < GACHA_TEN_N; i++)
     {
@@ -493,6 +510,7 @@ static void gacha_start_ten(void)
         }
     }
     if (owned_chg) coin_owned_save();
+    gacha_unlock();
     gc_box_y  = (LCD_HEIGHT - GACHA_BOX_SIZE) / 2;
     gc_bx0    = (LCD_WIDTH - GACHA_TEN_N * GACHA_BOX_PITCH) / 2;
     gc_lx     = -2;                     /* 屏外左侧进入 */
@@ -507,6 +525,7 @@ static void coin_score_battle(void)
 {
     int32_t base = 0;
     uint8_t i;
+    gacha_lock();
     coin_score_ensure();
     for (i = 0; i < cbm_me_c; i++)
     {
@@ -523,6 +542,7 @@ static void coin_score_battle(void)
     coin_score_streak++;                 /* 连胜+1 */
     if (coin_score_streak > coin_score_streak_max) coin_score_streak_max = coin_score_streak;
     coin_score_save();
+    gacha_unlock();
 }
 
 /* 局部水平居中画文字(中心线 cx) */
@@ -597,6 +617,7 @@ static void cbm_resolve(void)
     {
         return;                          /* 翻转中忽略按键 */
     }
+    gacha_lock();
     if (cbm_me_p > cbm_op_p)      { cbm_last_res = 1; if (cbm_op_c > 0) cbm_op_c--; }
     else if (cbm_me_p < cbm_op_p) { cbm_last_res = 2; if (cbm_me_c > 0) cbm_me_c--; }
     else { cbm_last_res = 3; }                           /* 平局重掷 */
@@ -604,11 +625,12 @@ static void cbm_resolve(void)
     {
         cbm_done = 2;
         if (coin_score_streak != 0) { coin_score_streak = 0; coin_score_save(); }  /* 输: 连胜清零 */
-        gc_coin_sub = COIN_RES; gacha_coin_render(); return;
+        gc_coin_sub = COIN_RES; gacha_coin_render(); gacha_unlock(); return;
     }
-    if (cbm_op_c == 0) { cbm_done = 1; gc_coin_sub = COIN_RES; coin_score_battle(); gacha_coin_render(); return; }
-    if (cbm_round >= 99) { cbm_done = 3; gc_coin_sub = COIN_RES; gacha_coin_render(); return; }
+    if (cbm_op_c == 0) { cbm_done = 1; gc_coin_sub = COIN_RES; coin_score_battle(); gacha_coin_render(); gacha_unlock(); return; }
+    if (cbm_round >= 99) { cbm_done = 3; gc_coin_sub = COIN_RES; gacha_coin_render(); gacha_unlock(); return; }
     cbm_roll();                          /* 下一轮 */
+    gacha_unlock();
 }
 
 /* 大招名拆行缓冲(战斗显示完整名) */
@@ -1099,11 +1121,13 @@ static const char *gacha_menu_items[GACHA_MENU_CNT] = { "十连", "拼点", "单
 /* 积分抽: 10当前积分直接抽一张★3, 扣当前积分并标记已抽; 走普通出金的语音打字机 */
 static void gacha_points_pull(void)
 {
+    gacha_lock();
     coin_score_ensure();
     if (coin_score_cur < GACHA_POINTS_PULL)
     {
         INS_Show("当前积分不足\n单抽需10积分");
         gc_phase = GC_SCORE;
+        gacha_unlock();
         return;
     }
     coin_score_cur -= GACHA_POINTS_PULL;
@@ -1116,6 +1140,7 @@ static void gacha_points_pull(void)
         coin_owned[gc_last_gold] = 1;
         coin_owned_save();
     }
+    gacha_unlock();
     gc_single = 1;
     gc_v_gold_idx = 0;
     gc_phase = GC_VOICE;
@@ -1351,19 +1376,25 @@ uint16_t GACHA_CoinTotal(void) { return COIN_SKILL_N; }
 uint16_t GACHA_CoinOwnedCount(void)
 {
     uint16_t i, n = 0;
+    gacha_lock();
     coin_score_ensure();
     for (i = 0; i < COIN_SKILL_N; i++)
     {
         if (coin_owned[i]) n++;
     }
+    gacha_unlock();
     return n;
 }
 
 uint8_t GACHA_CoinOwned(uint16_t idx)
 {
+    uint8_t r;
+    gacha_lock();
     coin_score_ensure();
-    if (idx >= COIN_SKILL_N) return 0;
-    return coin_owned[idx];
+    if (idx >= COIN_SKILL_N) r = 0;
+    else r = coin_owned[idx];
+    gacha_unlock();
+    return r;
 }
 
 const char *GACHA_CoinName(uint16_t idx)

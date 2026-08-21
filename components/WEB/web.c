@@ -959,6 +959,8 @@ static esp_err_t web_api_todo_post(httpd_req_t *req)
 /* ================= 下发指令(网页 -> 设备破译显示) ================= */
 static char web_pending_cmd[96];   /* 下发指令上限 96B: 避免拼"致使用者名"后超出破译缓冲(130B)截断 */
 static volatile uint8_t web_pending_flag = 0;
+/* 缓冲由 httpd 任务写(web_api_send)、ui_task 读(WEB_TakeCmd): 自旋锁串行化(S5) */
+static portMUX_TYPE web_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* POST /api/send: 接收 {cmd:"..."} 缓存, 由 ui_task 取出用乱码破译显示 */
 static esp_err_t web_api_send(httpd_req_t *req)
@@ -1004,9 +1006,11 @@ static esp_err_t web_api_send(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad cmd");
         return ESP_OK;
     }
+    portENTER_CRITICAL(&web_mux);
     strncpy(web_pending_cmd, cmd->valuestring, sizeof(web_pending_cmd) - 1);
     web_pending_cmd[sizeof(web_pending_cmd) - 1] = '\0';
     web_pending_flag = 1;
+    portEXIT_CRITICAL(&web_mux);
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -1016,17 +1020,20 @@ static esp_err_t web_api_send(httpd_req_t *req)
 /* ui_task 取出待显示指令(取走后清空), 返回 1=有待显示 */
 uint8_t WEB_TakeCmd(char *buf, size_t n)
 {
-    if (!web_pending_flag)
+    uint8_t r = 0;
+    portENTER_CRITICAL(&web_mux);
+    if (web_pending_flag)
     {
-        return 0;
+        if (n > 0)
+        {
+            strncpy(buf, web_pending_cmd, n - 1);
+            buf[n - 1] = '\0';
+        }
+        web_pending_flag = 0;
+        r = 1;
     }
-    if (n > 0)
-    {
-        strncpy(buf, web_pending_cmd, n - 1);
-        buf[n - 1] = '\0';
-    }
-    web_pending_flag = 0;
-    return 1;
+    portEXIT_CRITICAL(&web_mux);
+    return r;
 }
 
 /* 试响: 蜂鸣器响一下(验证蜂鸣/音量) */

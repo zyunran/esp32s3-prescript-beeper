@@ -6,10 +6,13 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"   /* adc 跨任务互斥量 */
 
 static const char *TAG = "BAT";
 static adc_oneshot_unit_handle_t bat_adc = NULL;
 static adc_cali_handle_t bat_cali = NULL;
+static SemaphoreHandle_t bat_mux = NULL;   /* 电量读取互斥(ui_task 与 httpd 任务共用) */
 
 void BAT_Init(void)
 {
@@ -56,32 +59,45 @@ void BAT_Init(void)
     {
         ESP_LOGW(TAG, "adc channel cfg failed");
     }
+    bat_mux = xSemaphoreCreateMutex();
 }
 
+/* ADC 读取在 ui_task(每2s)与 httpd 任务(/api/status)都可能调用:
+ * esp_adc oneshot 非线程安全; adc_oneshot_read 是阻塞转换读取(轮询硬件完成标志),
+ * 故用互斥量(两个调用方都是任务、非 ISR)而非自旋锁, 避免关中断忙等. */
 uint8_t BAT_GetPct(void)
 {
     int raw = 0;
-    int32_t mv, v;
+    int32_t mv;
+    if (!bat_mux || xSemaphoreTake(bat_mux, portMAX_DELAY) != pdTRUE)
+    {
+        return 255;                          /* 锁不可用: 保守视为无电池 */
+    }
     if (!bat_adc || adc_oneshot_read(bat_adc, BAT_ADC_CH, &raw) != ESP_OK || raw <= 0)
     {
-        return 255;                          /* 读不到/读零: 视为无电池 */
+        mv = -1;                             /* 读不到/读零: 视为无电池 */
     }
-    if (bat_cali)
+    else if (bat_cali)
     {
         int vout = 0;
-        if (adc_cali_raw_to_voltage(bat_cali, raw, &vout) != ESP_OK)
-        {
-            return 255;                      /* 校准换算失败, 保守视为无电池 */
-        }
-        mv = vout;
+        if (adc_cali_raw_to_voltage(bat_cali, raw, &vout) != ESP_OK) mv = -1;
+        else mv = vout;                      /* 校准换算 eFuse 曲线 */
     }
     else
     {
         mv = (int32_t)raw * 3100 / 4096;     /* 线性近似(校准不可用时的兜底) */
     }
-    v = mv * BAT_DIV;                        /* 换算到电池端电压 */
-    if (v < BAT_V_NONE) return 255;          /* 未接电池(纯USB) */
-    if (v <= BAT_V_EMPTY) return 0;
-    if (v >= BAT_V_FULL) return 100;
-    return (uint8_t)((v - BAT_V_EMPTY) * 100 / (BAT_V_FULL - BAT_V_EMPTY));
+    xSemaphoreGive(bat_mux);
+
+    if (mv < 0)
+    {
+        return 255;                          /* 读取/校准失败, 保守视为无电池 */
+    }
+    {
+        int32_t v = mv * BAT_DIV;            /* 换算到电池端电压 */
+        if (v < BAT_V_NONE) return 255;      /* 未接电池(纯USB) */
+        if (v <= BAT_V_EMPTY) return 0;
+        if (v >= BAT_V_FULL) return 100;
+        return (uint8_t)((v - BAT_V_EMPTY) * 100 / (BAT_V_FULL - BAT_V_EMPTY));
+    }
 }

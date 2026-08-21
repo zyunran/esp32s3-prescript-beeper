@@ -62,6 +62,7 @@ void    GACHA_ForceExit(void);   /* 强制退出(OK 长按返回主界面) */
 void    GACHA_OnEvent(uint8_t evt); /* 按键事件(1=UP 2=OK 3=DOWN) */
 void    GACHA_Tick(void);        /* 推进抽卡动画/语音/结果滚动, 每主循环调用 */
 uint8_t GACHA_Busy(void);        /* 1=抽卡界面运行中 */
+void    GACHA_Init(void);        /* 创建抽卡/图鉴跨任务互斥量(app_main 调用, 见 GACHA.c M2) */
 
 /* ================= 图鉴/拼点人格表访问(网页图鉴用; 调用会加载 NVS 已抽标记) ================= */
 uint16_t GACHA_CoinTotal(void);               /* 人格总数(120) */

@@ -979,6 +979,7 @@ void app_main(void)
     ANS_Init();   /* 答案之书初始化(NVS 加载) */
     BAT_Init();   /* 电量 ADC 初始化(GPIO1 分压) */
     MPU_Init();   /* MPU6050 六轴初始化(软件I2C, 无传感器则后台重试) */
+    GACHA_Init(); /* 创建抽卡/图鉴跨任务互斥量(须在 WEB_Init 启动 httpd 之前, 避免绘图请求撞上 mux=NULL) */
     WEB_Init();   /* 启动配置页(联网后访问 http://<ip>/) */
 
     key_q = xQueueCreate(8, sizeof(uint8_t));

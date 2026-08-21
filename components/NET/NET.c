@@ -49,6 +49,8 @@ static char net_ssid[33] = "";
 static char net_pass[65] = "";
 static char net_city[24] = NET_CITY_DEFAULT;
 static char net_key[48] = "";   /* 天气私钥: 默认空=不拉天气, 由网页填写(不内置 key) */
+/* 运行期配置跨任务互斥(M4): WEB 写 city/key, 天气任务取快照; 自旋锁只护纯内存拷贝(临界区内无 NVS) */
+static portMUX_TYPE net_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t net_cfg_valid = 0;   /* 1=用户已通过网页配置过 WiFi(否则纯AP配网模式) */
 static uint8_t sta_retry = 0;       /* STA 连续断连次数(≤2 后静默, 防反复扫描发烫/扰热点) */
 
@@ -196,8 +198,10 @@ static void net_weather_fetch(void)
     esp_http_client_handle_t cli;
     esp_err_t err;
 
+    portENTER_CRITICAL(&net_mux);              /* 快照与 WEB 写 city/key 互斥(M4) */
     strncpy(city, net_city, sizeof(city) - 1); city[sizeof(city) - 1] = '\0';
     strncpy(key, net_key, sizeof(key) - 1);    key[sizeof(key) - 1] = '\0';
+    portEXIT_CRITICAL(&net_mux);
 
     if (key[0] == '\0')              /* 天气私钥未配置: 跳过，防无效请求 */
     {
@@ -682,8 +686,10 @@ void NET_ClearWifi(void)
 
 void NET_SetCity(const char *city)
 {
+    portENTER_CRITICAL(&net_mux);
     strncpy(net_city, city, sizeof(net_city) - 1);
     net_city[sizeof(net_city) - 1] = '\0';
+    portEXIT_CRITICAL(&net_mux);
     net_cfg_save();
     net_weather_ok = 0;              /* 城市变了: 等下次刷新重新拉 */
     net_weather_fetched = 0;
@@ -693,8 +699,10 @@ const char *NET_GetKey(void) { return net_key; }
 
 void NET_SetKey(const char *key)
 {
+    portENTER_CRITICAL(&net_mux);
     strncpy(net_key, key, sizeof(net_key) - 1);
     net_key[sizeof(net_key) - 1] = '\0';
+    portEXIT_CRITICAL(&net_mux);
     /* 留空 = 不配置天气(不做任何内置 key 回退, 防泄露) */
     net_cfg_save();
     net_weather_ok = 0;              /* 私钥变了: 等下次刷新重新拉 */

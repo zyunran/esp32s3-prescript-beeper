@@ -15,9 +15,17 @@
 #include "esp_random.h"
 #include "driver/gpio.h"
 #include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+/* 指令库/破译参数跨任务互斥(清单 M4): WEB 任务写(INS_PresetsFromText/SetParams/SetFont),
+ * ui_task 读(INS_Presets/ShowRandom/ShowByIndex/破译解析). INS_Init 创建递归互斥量. */
+static SemaphoreHandle_t ins_mux = NULL;
+static void ins_lock(void)   { if (ins_mux) xSemaphoreTakeRecursive(ins_mux, portMAX_DELAY); }
+static void ins_unlock(void) { if (ins_mux) xSemaphoreGiveRecursive(ins_mux); }
 
 /* 破译参数(运行时可改, 默认护眼风格; WEB配置存NVS) */
 uint16_t INS_SCR_DEFAULT     = 0xE249;   /* 破译真字: 清晰红 */
@@ -574,6 +582,7 @@ static void ins_presets_load(void);   /* 前置声明(定义在下文) */
 void INS_Init(void)
 {
     ins_buzzer_init();
+    ins_mux = xSemaphoreCreateRecursiveMutex();   /* M4: WEB 任务配置与 UI 读取互斥 */
     ins_presets_load();
     /* 破译参数 + 当前使用者(NVS "ins2") */
     {
@@ -687,6 +696,7 @@ void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv)
 {
     if (dl < 5) dl = 5;
     if (rv < 10) rv = 10;
+    ins_lock();                                   /* 与 UI 破译解析读参互斥(整体更新不撕裂) */
     INS_SCR_DEFAULT = def;
     INS_SCR_GARBLE = gb;
     INS_SCR_DELAY_MS = dl;
@@ -701,6 +711,7 @@ void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv)
         nvs_commit(h);
         nvs_close(h);
     }
+    ins_unlock();
 }
 
 /* 破译字号读写(0=16 1=24 2=32px; 设置菜单+WEB, 存NVS "ins2"/"fnt") */
@@ -709,6 +720,7 @@ uint8_t INS_Font(void) { return ins_font; }
 void INS_SetFont(uint8_t f)
 {
     if (f > 2) f = 2;
+    ins_lock();
     ins_font = f;
     nvs_handle_t h;
     if (nvs_open("ins2", NVS_READWRITE, &h) == ESP_OK)
@@ -717,6 +729,7 @@ void INS_SetFont(uint8_t f)
         nvs_commit(h);
         nvs_close(h);
     }
+    ins_unlock();
 }
 
 /* 从 NVS 读指令库; 无则用内置默认 */
@@ -769,12 +782,14 @@ const char *const *INS_Presets(uint8_t *count)
 {
     static const char *ptrs[INS_PRESET_MAX];
     uint8_t i;
+    ins_lock();
     *count = ins_preset_count;
     for (i = 0; i < ins_preset_count; i++)
     {
         ptrs[i] = ins_presets[i];
     }
-    return ptrs;
+    ins_unlock();
+    return ptrs;   /* 数组只被 INS_PresetsFromText(同为 web 单线程)写, 解锁后指针稳定 */
 }
 
 /* 用 '\n' 分隔文本重建指令库并持久化(WEB 保存) */
@@ -782,6 +797,7 @@ void INS_PresetsFromText(const char *text)
 {
     const char *p = text, *nl;
     uint8_t n = 0;
+    ins_lock();                                   /* 重建期间屏蔽 UI 读取(ShowRandom/ShowByIndex) */
     while (*p && n < INS_PRESET_MAX)
     {
         size_t len;
@@ -820,6 +836,7 @@ void INS_PresetsFromText(const char *text)
         }
         nvs_close(h);
     }
+    ins_unlock();
 }
 
 void INS_SetBeep(uint8_t on)
@@ -884,8 +901,10 @@ void INS_ShowIns(const char *text)
 
 void INS_ShowByIndex(uint8_t idx)
 {
+    ins_lock();
     if (ins_preset_count == 0)
     {
+        ins_unlock();
         return;
     }
     if (idx >= ins_preset_count)
@@ -893,6 +912,7 @@ void INS_ShowByIndex(uint8_t idx)
         idx = 0;
     }
     INS_ShowIns(ins_presets[idx]);   /* 神谕指令: 无"致X:"自动加致当前使用者 */
+    ins_unlock();                    /* ShowIns 已同步把文本复制进破译缓冲, 解锁安全 */
 }
 
 /* 特殊代行者「浮士德/里恩」的专属指令池; 其他使用者返回 NULL(只走默认库) */
@@ -921,12 +941,15 @@ void INS_ShowRandom(void)
         INS_ShowIns(upool[esp_random() % uc]);
         return;
     }
+    ins_lock();
     if (ins_preset_count == 0 || (esp_random() % 3) == 0)   /* 库空或 1/3 概率: 模板现场生成 */
     {
+        ins_unlock();
         INS_ShowGenerated();
         return;
     }
-    INS_ShowByIndex(esp_random() % ins_preset_count);
+    INS_ShowByIndex(esp_random() % ins_preset_count);   /* 计数在锁内求值; ShowByIndex 仍会自身加锁(递归) */
+    ins_unlock();
 }
 
 void INS_Tick(void)
