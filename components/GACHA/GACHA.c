@@ -78,9 +78,10 @@ static const gacha_card_t *gacha_pick_gold(void);
 static uint8_t gacha_utf8_len(const char *s)
 {
     uint8_t b = (uint8_t)s[0];
-    if (b < 0x80) return 1;
-    if ((b & 0xE0) == 0xC0 && (s[1] & 0xC0) == 0x80) return 2;
-    if ((b & 0xF0) == 0xE0 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) return 3;
+    if (b == 0 || b < 0x80) return 1;
+    if ((b & 0xE0) == 0xC0 && s[1] != '\0' && (s[1] & 0xC0) == 0x80) return 2;
+    if ((b & 0xF0) == 0xE0 && s[1] != '\0' && s[2] != '\0' &&
+        (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) return 3;
     return 1;
 }
 

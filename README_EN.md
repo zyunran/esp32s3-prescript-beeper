@@ -84,7 +84,7 @@ Artifact: `build/oder.bin` (~1.57 MB).
 
 ### Provisioning & web configuration
 
-1. From the main menu go to **Network → Start provisioning** to turn on the hotspot `ESP32ODERAP` (password `ESP32ODER`).
+1. From the main menu go to **Network → Start provisioning** to turn on the hotspot `ESP32ODERAP` (the password is generated randomly per device and shown on the screen when the hotspot is enabled).
 2. Connect your phone to the hotspot — the config page pops up **automatically** (captive portal), or open `http://192.168.4.1/` manually.
 3. On the config page scan/save your WiFi, enter your city and **weather API key (Seniverse / 心知天气)**; the device switches to network mode.
 4. Afterwards, when the device and your phone/PC are on the same network, open the device's IP in a browser (shown on the status page) for full management.

@@ -602,8 +602,21 @@ const char *INS_UserName(void) { return ins_user; }
 
 void INS_SetUserName(const char *name)
 {
-    strncpy(ins_user, name, sizeof(ins_user) - 1);
-    ins_user[sizeof(ins_user) - 1] = '\0';
+    /* 按 UTF-8 完整字符截断到缓冲(ins_user[16]): 绝不在多字节字符中间切断,
+     * 避免超长使用者名(网页列表允许 23B)被截出非法 UTF-8 尾巴 */
+    size_t n = strnlen(name, sizeof(ins_user) - 1);
+    size_t used = 0;
+    while (used < sizeof(ins_user) - 1)
+    {
+        uint8_t c = (uint8_t)name[used];
+        uint8_t len = (c < 0x80) ? 1 :
+                      ((c & 0xE0) == 0xC0) ? 2 :
+                      ((c & 0xF0) == 0xE0) ? 3 : 4;
+        if (used + len > n || used + len > sizeof(ins_user) - 1) break;   /* 到串尾/超界: 停下 */
+        memcpy(ins_user + used, name + used, len);
+        used += len;
+    }
+    ins_user[used] = '\0';
     if (ins_user[0] == '\0') strcpy(ins_user, "李箱");   /* 空回退默认 */
     nvs_handle_t h;
     if (nvs_open("ins2", NVS_READWRITE, &h) == ESP_OK)

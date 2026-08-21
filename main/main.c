@@ -78,7 +78,7 @@ static uint8_t ui_stack_n = 0;
 /* ================= 彩蛋「纺织时间」(made in heaven): 现实1秒=显示1小时 ================= */
 static uint8_t mih_on = 0;            /* 1=时间加速中 */
 static time_t mih_base = 0;           /* 开启时刻真实 epoch */
-static uint32_t mih_ms = 0;           /* 开启时刻 esp_timer ms */
+static int64_t mih_ms = 0;            /* 开启时刻 esp_timer ms(int64: 防 >49.7 天 uptime 时 uint32 回绕) */
 static uint32_t mih_wx_last = 0;      /* 彩蛋天气刷新节流 ms */
 static uint32_t mih_draw_last = 0;    /* 彩蛋时间整屏重绘节流 ms(加速时秒变化远快于刷新率, 限流防总线/CPU 打满) */
 static uint8_t mih_confirm = 0;       /* 彩蛋确认乱码显示中(播完自动回主界面) */
@@ -91,9 +91,9 @@ static void mih_toggle(void)
     if (mih_on)
     {
         mih_base = time(NULL);
-        mih_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        mih_wx_last = mih_ms;
-        mih_draw_last = mih_ms;
+        mih_ms = (int64_t)(esp_timer_get_time() / 1000);
+        mih_wx_last = (uint32_t)mih_ms;
+        mih_draw_last = (uint32_t)mih_ms;
     }
 }
 
@@ -396,7 +396,16 @@ static void on_event(uint8_t evt)
                 else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-开启配网: 开/关配网热点 */
                 {
                     uint8_t on = NET_ApToggle();
-                    UI_FullScreen("开启配网", on ? "热点已开 ESP32ODERAP/ESP32ODER" : "热点已关");
+                    if (on)
+                    {
+                        char m[44];   /* "热点已开 <SSID>/<8位随机密码>" */
+                        snprintf(m, sizeof(m), "热点已开 %s/%s", NET_GetApSsid(), NET_GetApPass());
+                        UI_FullScreen("开启配网", m);
+                    }
+                    else
+                    {
+                        UI_FullScreen("开启配网", "热点已关");
+                    }
                     ui_push(ST_INFO);                   /* 任意键回联网子菜单 */
                 }
                 else if (cfg->fn == UI_FN_NET && sel == UI_NET_WEATHER)  /* 联网-查看天气 -> 天气逐字破译 */
@@ -404,25 +413,27 @@ static void on_event(uint8_t evt)
                     static char wbuf[96];
                     uint8_t wc = NET_WeatherCount(), i;
                     const char *d;
+                    size_t wp = 0;   /* 写指针: 带余量, 防 3×31B 天气行超 96B 缓冲 */
                     wbuf[0] = '\0';
                     for (i = 0; i < wc && i < 3; i++)
                     {
                         d = NET_WeatherDayStr(i);
                         if (!d) continue;
-                        if (wbuf[0]) strcat(wbuf, "\n");
-                        strcat(wbuf, d);
+                        if (wp >= sizeof(wbuf) - 1) break;
+                        wp += (size_t)snprintf(&wbuf[wp], sizeof(wbuf) - wp, "%s%s",
+                                               (wp ? "\n" : ""), d);
                     }
-                    if (wbuf[0] == '\0')
+                    if (wp == 0)
                     {
                         strcpy(wbuf, "暂无天气数据");
+                        wp = strlen(wbuf);
                     }
                     else if (NET_WeatherAge() > 3600)   /* 数据超过1小时: 旧数据附更新时间戳 */
                     {
                         const char *u = NET_WeatherUpdatedStr();
-                        if (u && strlen(wbuf) + 1 + strlen(u) < sizeof(wbuf))
+                        if (u && wp < sizeof(wbuf) - 1)
                         {
-                            strcat(wbuf, "\n");
-                            strcat(wbuf, u);
+                            wp += (size_t)snprintf(&wbuf[wp], sizeof(wbuf) - wp, "\n%s", u);
                         }
                     }
                     INS_Show(wbuf);   /* 复用乱码破译: 逐字显示, 与指令一致 */
@@ -476,7 +487,7 @@ static void on_event(uint8_t evt)
                 {
                     egg_toggle();
                 }
-                else if (cfg->fn == UI_FN_USER && sel < cfg->item_count - 1)  /* 使用者: 选名字 */
+                else if (cfg->fn == UI_FN_USER && cfg->item_count > 0 && sel + 1 < cfg->item_count)  /* 使用者: 选名字(sel+1 防 item_count-1 在 0 时下溢) */
                 {
                     INS_SetUserName(cfg->items[sel]);
                     UI_SetUserTitle(cfg->items[sel]);   /* 主菜单标题实时显示当前名(如但丁) */
@@ -790,6 +801,11 @@ static void ui_task(void *arg)
                 {
                     WEB_ConfigDirtyClear();
                     TODO_Enter();   /* 网页改了待办: 刷新列表(光标重置) */
+                }
+                else if (ui_state == ST_ALARM)
+                {
+                    WEB_ConfigDirtyClear();
+                    ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
                 }
             }
             if (ui_state == ST_MAIN)

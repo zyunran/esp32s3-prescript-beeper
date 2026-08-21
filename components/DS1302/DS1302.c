@@ -132,6 +132,16 @@ uint8_t DS1302_Read(struct tm *t)
     t->tm_mday = mday;
     t->tm_mon  = mon - 1;
     t->tm_year = (int)(2000 + year) - 1900;   /* DS1302 两位年 00-99 -> 2000-2099 */
+    /* 星期寄存器(buf[5], DS1302: 1=周日..7=周六)读回 tm_wday(0=周日);
+     * 非法时置 -1(未知), 调用方用 mktime 会自动按日期重算 */
+    if (rtc_bcd_ok(buf[5]) && buf[5] >= 0x01 && buf[5] <= 0x07)
+    {
+        t->tm_wday = (int)(rtc_bcd2u(buf[5]) - 1);
+    }
+    else
+    {
+        t->tm_wday = -1;
+    }
     t->tm_isdst = 0;
     return 1;
 }
@@ -145,12 +155,22 @@ void DS1302_Write(const struct tm *t)
     rtc_tx_byte(0x00);             /* WP=0 允许写 */
     rtc_end();
 
+    /* 星期由日期归一化(mktime 按 tm_year/mon/mday 重算 tm_wday):
+     * 防御调用方给的 tm_wday 非法/未填(-1), 避免写坏 DS1302 星期寄存器 */
+    struct tm tn = *t;
+    tn.tm_isdst = -1;
+    mktime(&tn);
+    if (tn.tm_wday < 0 || tn.tm_wday > 6)
+    {
+        tn.tm_wday = (t->tm_wday >= 0 && t->tm_wday <= 6) ? t->tm_wday : 0;
+    }
+
     buf[0] = (uint8_t)(rtc_u2bcd((uint8_t)t->tm_sec) & 0x7F);          /* 清 CH 起振 */
     buf[1] = rtc_u2bcd((uint8_t)t->tm_min);
     buf[2] = rtc_u2bcd((uint8_t)t->tm_hour);
     buf[3] = rtc_u2bcd((uint8_t)t->tm_mday);
     buf[4] = rtc_u2bcd((uint8_t)(t->tm_mon + 1));
-    buf[5] = rtc_u2bcd((uint8_t)(t->tm_wday + 1));                      /* tm_wday 0=周日..6=周六 -> DS1302 星期 1=周日..7=周六 */
+    buf[5] = rtc_u2bcd((uint8_t)(tn.tm_wday + 1));                      /* tm_wday 0=周日..6=周六 -> DS1302 星期 1=周日..7=周六 */
     buf[6] = rtc_u2bcd((uint8_t)(t->tm_year % 100));
     buf[7] = 0x00;                /* WP 保持关闭, 下次直接可写 */
 

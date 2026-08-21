@@ -4,6 +4,7 @@
 #include "SOUND.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -13,15 +14,19 @@
 #define SOUND_DIN    GPIO_NUM_18
 #define SOUND_SD     GPIO_NUM_13   /* 功放关断(低=关): 音量0时拉低避免底噪 */
 #define SOUND_RATE   16000        /* 采样率, 与 wav2c.py 转换一致 */
+static const char *TAG = "SOUND";
 
 static i2s_chan_handle_t snd_tx;
 static SemaphoreHandle_t snd_sem;       /* 唤醒播放任务 */
-static const int16_t *snd_pcm;          /* 待播缓冲 */
-static uint32_t snd_frames;
-static uint8_t snd_busy;
-static uint8_t snd_loop;                /* 1=循环播放直到 SOUND_Stop */
-static uint8_t snd_gen;                 /* 播放代次: Play/Stop 时递增, 任务据此即时切换/停止 */
-static uint8_t snd_vol = 100;           /* 音量 0~100(默认满) */
+/* 以下播放状态由调用任务(ui_task: Play/PlayLoop/Stop/SetVolume)与 snd_task 跨任务共享:
+ *  - volatile: 防编译器把代次/指针/音量缓存在寄存器导致无限循环或读到陈旧值(M3)
+ *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次 */
+static const int16_t * volatile snd_pcm;  /* 待播缓冲 */
+static volatile uint32_t snd_frames;
+static volatile uint8_t  snd_busy;
+static volatile uint8_t  snd_loop;        /* 1=循环播放直到 SOUND_Stop */
+static volatile uint16_t snd_gen;         /* 播放代次: Play/Stop 时递增, 任务据此即时切换/停止 */
+static volatile uint8_t  snd_vol = 100;   /* 音量 0~100(默认满; WEB/设置任务可改, 播放任务缩放时读) */
 static int16_t snd_scratch[1024];       /* 音量缩放暂存(与写入块 2048B 对应) */
 
 /* 播放任务: 收到信号量后写入 PCM; 代次变化(新 Play/Stop)则立即中止当前缓冲 */
@@ -30,7 +35,7 @@ static void snd_task(void *arg)
     for (;;)
     {
         xSemaphoreTake(snd_sem, portMAX_DELAY);
-        uint8_t gen = snd_gen;
+        uint16_t gen = snd_gen;
         do
         {
             uint8_t *p = (uint8_t *)snd_pcm;
@@ -87,7 +92,12 @@ void SOUND_Init(void)
         .dma_frame_num = 240,
         .auto_clear = true,     /* 空闲输出 0, 喇叭静音 */
     };
-    i2s_new_channel(&cc, &snd_tx, NULL);
+    if (i2s_new_channel(&cc, &snd_tx, NULL) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "i2s new channel failed");
+        gpio_set_level(SOUND_SD, 0);   /* 保持功放关断(静音) */
+        return;
+    }
 
     i2s_std_config_t sc = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SOUND_RATE),
@@ -101,8 +111,13 @@ void SOUND_Init(void)
             .invert_flags = { .bclk_inv = false, .ws_inv = false },
         },
     };
-    i2s_channel_init_std_mode(snd_tx, &sc);
-    i2s_channel_enable(snd_tx);
+    if (i2s_channel_init_std_mode(snd_tx, &sc) != ESP_OK ||
+        i2s_channel_enable(snd_tx) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "i2s init/enable failed");
+        gpio_set_level(SOUND_SD, 0);   /* 保持静音; SOUND_Play 因 snd_sem 为 NULL 直接返回 */
+        return;
+    }
 
     /* I2S 就绪(auto_clear 静音)后再开功放 */
     gpio_set_level(SOUND_SD, 1);

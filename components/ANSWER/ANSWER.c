@@ -170,11 +170,14 @@ static void ans_list_save(uint8_t cat)
     nvs_handle_t h;
     static char buf[ANS_TOTAL_MAX * ANS_LINE_MAX];   /* static: 不占调用栈 */
     uint8_t i;
+    size_t wp = 0;
     buf[0] = '\0';   /* 先清空(static 首帧为 0, 但二次调用需重置) */
     for (i = 0; i < ans_list_n[cat]; i++)
     {
-        if (i) strcat(buf, "\n");
-        strcat(buf, ans_list[cat][i]);
+        /* 带余量拼接: 缓冲只比最坏情况多 1B, 用 snprintf 防贴上限溢出 */
+        if (wp >= sizeof(buf) - 1) break;
+        wp += (size_t)snprintf(&buf[wp], sizeof(buf) - wp, "%s%s",
+                               (i ? "\n" : ""), ans_list[cat][i]);
     }
     if (nvs_open("ans", NVS_READWRITE, &h) == ESP_OK)
     {
@@ -276,12 +279,14 @@ const char *ANS_Custom(uint8_t cat)   /* 该分类【全部】答案整串文本
 {
     static char out[ANS_TOTAL_MAX * ANS_LINE_MAX];
     uint8_t i;
+    size_t wp = 0;
     if (cat >= ANS_CAT_N) return "";
     out[0] = '\0';
     for (i = 0; i < ans_list_n[cat]; i++)
     {
-        if (i) strcat(out, "\n");
-        strcat(out, ans_list[cat][i]);
+        if (wp >= sizeof(out) - 1) break;
+        wp += (size_t)snprintf(&out[wp], sizeof(out) - wp, "%s%s",
+                               (i ? "\n" : ""), ans_list[cat][i]);
     }
     return out;
 }

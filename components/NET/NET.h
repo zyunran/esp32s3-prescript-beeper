@@ -35,6 +35,7 @@ const char *NET_GetKey(void);              /* 心知天气 API 私钥 */
 const char *NET_GetApSsid(void);           /* 配网热点名 */
 const char *NET_GetApPass(void);           /* 配网热点密码 */
 void NET_SetWifi(const char *ssid, const char *pass);   /* 保存WiFi并切到AP+STA连网 */
+void NET_ClearWifi(void);                               /* 清除已存 WiFi, 回纯 AP 配网模式(WEB"清除"按钮) */
 void NET_SetCity(const char *city);                     /* 立即置为待重拉 */
 void NET_SetKey(const char *key);                       /* 改天气私钥, 立即置为待重拉 */
 uint8_t NET_ScanWifi(uint8_t max, char ssids[][33], int8_t rssi[], uint8_t enc[]); /* 扫描附近WiFi, 返回条数 */

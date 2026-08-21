@@ -95,9 +95,15 @@ static uint32_t alm_now(void)
 
 static uint32_t alm_today(void)
 {
+    /* 本地日(本地零点起的 epoch 天数): 与 ALM_Check 的 hh/mm/wday 触发判断同一时区基准,
+     * 避免用 UTC 天数做去重键在本地子夜附近错位(漏触发/重复触发/一次性不关) */
     time_t now;
+    struct tm t;
     time(&now);
-    return (uint32_t)(now / 86400);
+    localtime_r(&now, &t);
+    t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
+    t.tm_isdst = -1;                     /* 交给 mktime 按当前 TZ/DST 规则归一 */
+    return (uint32_t)(mktime(&t) / 86400);
 }
 
 /* ================= NVS 持久化 ================= */
@@ -286,6 +292,15 @@ static void alm_list_key_ok(void)
     alm_list_enter();               /* 重建列表 */
 }
 
+/* 网页改闹钟(web_dirty): 若正停在"当前闹钟"列表, 就地重建(内容随 alm[] 更新即时反映) */
+void ALM_WebChanged(void)
+{
+    if (alm_busy && alm_ph == AL_LIST)
+    {
+        alm_list_enter();
+    }
+}
+
 static void alm_list_key_long(void)   /* 长按OK 删除该闹钟 */
 {
     uint8_t sel = UI_SubMenuCur();
@@ -332,6 +347,10 @@ void ALM_GetSlot(uint8_t i, uint8_t *en, uint8_t *hh, uint8_t *mm, uint8_t *days
 void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, uint8_t once)
 {
     if (i >= ALM_MAX) return;
+    /* 防御性钳位: 非法输入不落库(网页已校验, 双保险防 99:99 之类坏数据) */
+    if (hh > 23) hh = 23;
+    if (mm > 59) mm = 59;
+    if (days > 0x7F) days &= 0x7F;      /* 只保留星期位 bit0..bit6 */
     alm[i].en = en ? 1 : 0;
     alm[i].hh = hh;
     alm[i].mm = mm;

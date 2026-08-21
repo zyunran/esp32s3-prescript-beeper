@@ -35,7 +35,7 @@ static const char *TAG = "NET";
  * 或直接写入 NVS "net" 命名空间(ssid/pass/city/key). 防止源码公开时泄露个人凭据. */
 #define NET_CITY_DEFAULT    "chengdu"     /* 心知天气城市(拼音, 如 beijing/shanghai) */
 #define NET_AP_SSID         "ESP32ODERAP"     /* 配网/配置页热点(手机连上后开 192.168.4.1) */
-#define NET_AP_PASSWORD     "ESP32ODER"       /* 热点密码(WPA2, ≥8位; 改这里即可换) */
+/* 热点密码不再硬编码(公开仓库曾内置, 任何人可连热点): 每台设备首次启动随机生成 8 位并存 NVS(见 net_ap_pass) */
 /* 国内 NTP 服务器(UDP 123, pool.ntp.org 在国内常不通, 换国内源可靠) */
 #define SNTP_SERVER0   "cn.pool.ntp.org"
 #define SNTP_SERVER1   "ntp.aliyun.com"
@@ -60,7 +60,9 @@ static uint8_t net_started = 0;   /* 已开始联网(幂等) */
 static uint8_t  net_ap_client = 0;           /* 1=有手机连着热点 */
 static uint8_t  net_ap_timeout_task_run = 0; /* 超时检查任务是否在跑 */
 static uint32_t net_ap_open_ms = 0;          /* 热点开启时刻(esp_timer ms) */
+static char     net_ap_pass[16] = "";        /* 配网热点密码: 每台随机生成(去 0O1lI 混淆字形), NVS "net"/"appass" 持久化 */
 static TaskHandle_t net_dns_task_h = NULL;   /* captive portal DNS 任务句柄(仅热点开启时运行) */
+static volatile uint8_t net_dns_active = 0;  /* 1=DNS 任务运行; 置 0 后任务自行收尾关 fd(不外部强删, 防 socket 泄漏) */
 
 /* ================= 天气状态 ================= */
 typedef struct {
@@ -82,7 +84,7 @@ static uint8_t net_weather_n = 0;         /* 实际解析天数(API 可能只回
 static uint8_t net_weather_fetched = 0;   /* 本次会话已拉取(断连后重置再拉) */
 static uint8_t net_weather_busy = 0;      /* 天气任务存活(防止断连重连时堆积) */
 static time_t  net_weather_at = 0;        /* 上次拉取成功时刻(epoch; 详情页旧数据时间戳) */
-static char net_weather_raw[2048];        /* HTTP 响应缓冲 */
+static char net_weather_raw[4096];        /* HTTP 响应缓冲(3日+夜间/湿度 JSON 可能逼近 2KB, 放大防截断) */
 static uint16_t net_weather_raw_len = 0;
 
 /* ================= 天气拉取(HTTP + cJSON) ================= */
@@ -313,7 +315,7 @@ static void net_ap_timeout_task(void *arg)
         esp_wifi_start();
         net_tx_power();
         net_ap_timeout_task_run = 0;
-        if (net_dns_task_h) { vTaskDelete(net_dns_task_h); net_dns_task_h = NULL; }   /* DNS 随超时关热点一起停 */
+        net_dns_active = 0;   /* DNS 随超时关热点一起停(任务自行收尾关 fd) */
         break;
     }
     vTaskDelete(NULL);
@@ -383,6 +385,7 @@ static void net_dns_task(void *arg)
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
+        net_dns_task_h = NULL;   /* 自清句柄: 外部只置 net_dns_active=0, 不 vTaskDelete */
         vTaskDelete(NULL);
         return;
     }
@@ -393,14 +396,23 @@ static void net_dns_task(void *arg)
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0)
     {
         close(sock);
+        net_dns_task_h = NULL;
         vTaskDelete(NULL);
         return;
     }
+    /* 非阻塞 + 20ms 轮询: 关热点时外部置 net_dns_active=0, 本任务自行退出并 close(fd),
+     * 避免外部 vTaskDelete 强删阻塞中的任务导致 socket(FD)永久泄漏(清单 M1) */
+    fcntl(sock, F_SETFL, O_NONBLOCK);
     uint8_t buf[512];
-    for (;;)
+    while (net_dns_active)
     {
         fromlen = sizeof(from);
         int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&from, &fromlen);
+        if (len < 0)
+        {
+            vTaskDelay(20 / portTICK_PERIOD_MS);   /* 无数据: 轮询, 也让关停信号尽快生效 */
+            continue;
+        }
         if (len < 12) continue;
         uint16_t qdcount = (uint16_t)((buf[4] << 8) | buf[5]);
         int qend = 12;
@@ -423,6 +435,9 @@ static void net_dns_task(void *arg)
         buf[qend + 12] = 192; buf[qend + 13] = 168; buf[qend + 14] = 4; buf[qend + 15] = 1;   /* 192.168.4.1 */
         sendto(sock, buf, qend + 16, 0, (struct sockaddr *)&from, fromlen);
     }
+    close(sock);             /* 收尾: 关键一步, 关 fd 防泄漏 */
+    net_dns_task_h = NULL;   /* 自清句柄: 允许下次开启热点重建 */
+    vTaskDelete(NULL);
 }
 
 /* 加载持久化配置(NVS "net"); 有用户存过的 WiFi 才进入 APSTA, 否则纯AP配网 */
@@ -453,7 +468,24 @@ static void net_cfg_load(void)
         {
             net_key[0] = '\0';   /* 无 key: 保持未配置(不内置任何 key) */
         }
+        n = sizeof(net_ap_pass);
+        if (nvs_get_str(h, "appass", net_ap_pass, &n) != ESP_OK) net_ap_pass[0] = '\0';
         nvs_close(h);
+    }
+    /* AP 密码首次确保: 无则随机生成 8 位(易辨认字符集), 持久化; 不改则跨重启稳定 */
+    if (net_ap_pass[0] == '\0')
+    {
+        static const char cs[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        uint8_t k;
+        for (k = 0; k < 8; k++) net_ap_pass[k] = cs[esp_random() % (sizeof(cs) - 1)];
+        net_ap_pass[8] = '\0';
+        if (nvs_open("net", NVS_READWRITE, &h) == ESP_OK)
+        {
+            nvs_set_str(h, "appass", net_ap_pass);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        ESP_LOGI(TAG, "AP pass generated (privacy: per-device, not hardcoded)");
     }
 }
 
@@ -534,7 +566,7 @@ uint8_t NET_ApToggle(void)
         esp_wifi_start();
         net_tx_power();
         net_ap_client = 0;   /* 复位客户端状态 */
-        if (net_dns_task_h) { vTaskDelete(net_dns_task_h); net_dns_task_h = NULL; }   /* DNS 随热点关闭 */
+        net_dns_active = 0;  /* DNS 随热点关闭(任务自行收尾关 fd) */
         ESP_LOGI(TAG, "AP off -> STA only");
         return 0;
     }
@@ -543,7 +575,7 @@ uint8_t NET_ApToggle(void)
         wifi_config_t acfg = {0};
         strncpy((char *)acfg.ap.ssid, NET_AP_SSID, sizeof(acfg.ap.ssid) - 1);
         acfg.ap.ssid_len = (uint8_t)strlen(NET_AP_SSID);
-        strncpy((char *)acfg.ap.password, NET_AP_PASSWORD, sizeof(acfg.ap.password) - 1);
+        strncpy((char *)acfg.ap.password, net_ap_pass, sizeof(acfg.ap.password) - 1);
         acfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
         acfg.ap.max_connection = 4;
         esp_wifi_stop();
@@ -554,6 +586,7 @@ uint8_t NET_ApToggle(void)
         net_ap_open_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (!net_dns_task_h)
         {
+            net_dns_active = 1;
             xTaskCreate(net_dns_task, "dns", 3072, NULL, 1, &net_dns_task_h);  /* captive portal 随热点启动 */
         }
         if (!net_ap_timeout_task_run)
@@ -573,7 +606,7 @@ const char *NET_GetSsid(void) { return net_ssid; }
 const char *NET_GetPass(void) { return net_pass; }
 const char *NET_GetCity(void) { return net_city; }
 const char *NET_GetApSsid(void) { return NET_AP_SSID; }
-const char *NET_GetApPass(void) { return NET_AP_PASSWORD; }
+const char *NET_GetApPass(void) { return net_ap_pass; }
 
 /* 延迟重连任务: 网页保存 WiFi 后, 等保存响应发出去再重连(避免射频切换打断保存请求) */
 static void net_reconnect_task(void *arg)
@@ -627,6 +660,24 @@ void NET_SetWifi(const char *ssid, const char *pass)
             net_tx_power();
         }
     }
+}
+
+/* 清除已存 WiFi(网页"清除"按钮): 删 ssid/pass, 回纯 AP 配网模式(下次启动按纯 AP 判定) */
+void NET_ClearWifi(void)
+{
+    net_ssid[0] = '\0';
+    net_pass[0] = '\0';
+    net_cfg_valid = 0;
+    net_cfg_save();                 /* 空 ssid/pass 写回 NVS: 下次 net_cfg_load 判定为纯 AP */
+    if (net_started)
+    {
+        esp_wifi_disconnect();
+        esp_wifi_stop();
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        esp_wifi_start();
+        net_tx_power();
+    }
+    ESP_LOGI(TAG, "saved WiFi cleared (back to pure AP provisioning)");
 }
 
 void NET_SetCity(const char *city)
@@ -710,6 +761,7 @@ void NET_WifiStop(void)
     esp_wifi_stop();
     net_wifi_ok = 0;
     net_weather_fetched = 0;   /* 重连后重新拉天气 */
+    net_dns_active = 0;        /* 待机停 WiFi: DNS 任务一并停(防配网热点开着时待机空转耗电) */
 }
 
 void NET_WifiStart(void)

@@ -18,7 +18,7 @@ static uint16_t tim_set_min;      /* 设定分钟 1..TIMER_MAX_MIN */
 static uint32_t tim_start;        /* 倒计时开始时刻 ms */
 static uint32_t tim_dur;          /* 倒计时总时长 ms */
 static uint32_t tim_last_sec;     /* 上次显示秒 */
-static uint32_t tim_fast_ms;      /* 快进累计补偿 ms(避免直接改 tim_start 造成下溢) */
+static uint64_t tim_fast_ms;     /* 快进累计补偿 ms(避免直接改 tim_start 造成下溢; uint64 防长按快进累积溢出) */
 static uint32_t tim_anim_start;   /* 角光标扩散动画开始时刻 */
 static int16_t  tim_corner_exp;   /* 角光标扩散量(0=收缩) */
 static int16_t  tim_slide;        /* 滑动条动画偏移(0=静止) */
@@ -37,7 +37,7 @@ static uint32_t tim_now(void)
 /* 剩余时长 ms(含快进补偿; int64 避免下溢/回绕) */
 static int64_t tim_remain(void)
 {
-    return (int64_t)tim_dur - ((int64_t)(tim_now() - tim_start) + tim_fast_ms);
+    return (int64_t)tim_dur - ((int64_t)(tim_now() - tim_start) + (int64_t)tim_fast_ms);
 }
 
 /* ---- 绘制小工具 ---- */

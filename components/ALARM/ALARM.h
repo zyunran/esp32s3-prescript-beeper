@@ -17,6 +17,7 @@ void ALM_Tick(void);                                       /* 每主循环推进
 uint8_t ALM_Busy(void);                                    /* 1=闹钟界面运行中 */
 uint8_t ALM_Check(void);                                   /* 1=本时刻有闹钟到点(已标记当日触发) */
 void ALM_Show(void);                                       /* 显示一条闹钟专属指令(INS_Show 乱码) */
+void ALM_WebChanged(void);                                 /* 网页改了闹钟: 若处于"当前闹钟"列表则就地重建(立即反映) */
 /* 槽位读写(WEB 配置用; days: bit0=周日..bit6=周六 位掩码, 0x7F=每天; once: 1=一次性) */
 uint8_t ALM_Max(void);                                     /* 最大槽数 */
 void ALM_GetSlot(uint8_t i, uint8_t *en, uint8_t *hh, uint8_t *mm, uint8_t *days, uint8_t *once);

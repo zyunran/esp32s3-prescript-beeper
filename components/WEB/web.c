@@ -36,6 +36,10 @@
 
 static const char *TAG = "WEB";
 
+/* 凭据脱敏掩码: /api/cfg 不回传 WiFi 密码/天气 key 明文(该端口 LAN 内任意设备可访问);
+ * 配置页以掩码占位, 保存时遇到该串视为"保持不变", 不覆盖已存凭据 */
+#define WEB_SECRET_MASK "********"
+
 /* 配置已改标志: 网页保存配置/待办后置 1, ui_task 检测后重绘主界面应用(实时生效+绘制统一避免并发) */
 static uint8_t web_dirty = 0;
 uint8_t WEB_ConfigDirty(void)      { return web_dirty; }
@@ -199,7 +203,8 @@ static const char web_page[] =
 "<button id=scanwifi type=button style='background:#1f5f9f;color:#fff;padding:8px 16px;border:0;border-radius:6px;margin-bottom:8px'>扫描附近 WiFi</button>"
 "<div id=wifilist style='max-height:180px;overflow:auto;border:1px solid #3a5a3a;border-radius:4px;margin-bottom:8px;display:none'></div>"
 "<label>WiFi 名</label><input id=ssid type=text placeholder='扫描选择或手输'>"
-"<label>WiFi 密码</label><input id=pass type=password>"
+"<label>WiFi 密码(已配置不回显, 星号=保持不变)</label><input id=pass type=password>"
+"<div class=row><button id=clrwifi type=button style='background:#5a2a2a;color:#fff;padding:6px 14px;border:0;border-radius:6px' onclick=clrwifi()>清除已存WiFi(回配网模式)</button></div>"
 "<label>天气城市(拼音)</label><input id=city type=text placeholder='chengdu / beijing'>"
 "<label>天气 API 私钥(心知天气)</label><input id=key type=text placeholder='留空用内置默认'>"
 "<h2>② 指令库(神谕随机抽取)</h2><div class=hint>每行一条; 支持 {#FF0000}颜色 / {RAND:1-10}随机数 / {TODO}待办</div><textarea id=ins></textarea>"
@@ -237,7 +242,8 @@ static const char web_page[] =
 "<div class=row><input id=sendtxt type=text placeholder='如: 去喝水' maxlength='96' style='flex:1'><button onclick=sendcmd() style='background:#2a5a8f;color:#fff;padding:8px 16px;border:0;border-radius:6px'>发送</button></div>"
 "<div id=msg2></div>"
 "<script>"
-"const COLS=['bg','menu','frame','icon','time','date'],CN=['背景','菜单','选中框','图标','时钟','日期'];"
+"const COLS=['bg','menu','frame','icon','time','date'],CN=['背景','菜单','选中框','图标','时钟','日期'];\n"
+"function esc(s){return String(s).replace(/[&<>\"']/g,function(c){return '&#'+c.charCodeAt(0)+';';});}"
 "const P={'护眼绿':{bg:'141A14',menu:'C8E0C0',frame:'8FD48A',icon:'7FD0D0',time:'C8E0C0',date:'C8E0C0'},'深空黑':{bg:'101018',menu:'C0C0D8',frame:'7080F0',icon:'40A0E0',time:'C0C0D8',date:'808090'},'暖橙':{bg:'181410',menu:'E0D0C0',frame:'FF9040',icon:'FFB070',time:'E0D0C0',date:'A08060'},'星云紫':{bg:'141018',menu:'D8C8E8',frame:'A070F0',icon:'80C0F0',time:'D8C8E8',date:'807090'},'赛博青':{bg:'081018',menu:'B8E8F0',frame:'20C8F0',icon:'F060D0',time:'B8E8F0',date:'508090'},'落日橙':{bg:'1A1008',menu:'F0D0A8',frame:'FF8030',icon:'FFC060',time:'F0D0A8',date:'907050'},'樱花粉':{bg:'180E12',menu:'F0C8D8',frame:'F078A8',icon:'C8A0F0',time:'F0C8D8',date:'805060'},'薄荷绿':{bg:'0C1810',menu:'C8F0DC',frame:'40E090',icon:'80E0C0',time:'C8F0DC',date:'508070'}};"
 "Object.keys(P).forEach(k=>document.getElementById('preset').insertAdjacentHTML('beforeend','<option>'+k+'</option>'));"
 "function preset(k){if(!P[k])return;Object.keys(P[k]).forEach(c=>document.getElementById('col_'+c).value='#'+P[k][c]);}"
@@ -257,7 +263,7 @@ static const char web_page[] =
 "document.getElementById('ssid').value=j.wifi.ssid;document.getElementById('pass').value=j.wifi.pass;document.getElementById('city').value=j.city;document.getElementById('key').value=j.key||'';"
 "document.getElementById('ins').value=(j.ins||[]).join('\\n');"
 "document.getElementById('ans0').value=j.ans&&j.ans.c0||'';document.getElementById('ans1').value=j.ans&&j.ans.c1||'';document.getElementById('ans2').value=j.ans&&j.ans.c2||'';document.getElementById('ans3').value=j.ans&&j.ans.c3||'';"
-"let uo=j.users.map(u=>'<option'+(u==j.user?' selected':'')+'>'+u+'</option>').join('');if(j.users.indexOf(j.user)<0)uo+='<option selected>'+j.user+'</option>';document.getElementById('user').innerHTML=uo;"
+"let uo=j.users.map(u=>'<option'+(u==j.user?' selected':'')+'>'+esc(u)+'</option>').join('');if(j.users.indexOf(j.user)<0)uo+='<option selected>'+esc(j.user)+'</option>';document.getElementById('user').innerHTML=uo;"
 "document.getElementById('cols').innerHTML=COLS.map((c,i)=>'<span>'+CN[i]+'<input type=color id=col_'+c+' value=#'+j.colors[c]+'></span>').join('');"
 "AL=(j.alarms||[]).filter(function(a){return a.en;});almRender();"
 "document.getElementById('beep').checked=j.beep?1:0;document.getElementById('vol').value=j.vol;"
@@ -265,7 +271,7 @@ static const char web_page[] =
 "document.getElementById('cursor').value=j.cursor;"
 "document.getElementById('gdef').value='#'+j.garble.def;document.getElementById('ggb').value='#'+j.garble.gb;"
 "document.getElementById('gdl').value=j.garble.dl;document.getElementById('grv').value=j.garble.rv;document.getElementById('gfnt').value=j.garble.fnt;}"
-"async function userAdd(){let n=document.getElementById('useradd').value.trim();if(!n)return;let r=await(await fetch('/api/user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})})).json();if(r.ok){let s=document.getElementById('user');if(![...s.options].some(o=>o.value==n))s.insertAdjacentHTML('beforeend','<option>'+n+'</option>');s.value=n;document.getElementById('useradd').value='';}else{alert('添加失败');}}"
+"async function userAdd(){let n=document.getElementById('useradd').value.trim();if(!n)return;let r=await(await fetch('/api/user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})})).json();if(r.ok){let s=document.getElementById('user');if(![...s.options].some(o=>o.value==n))s.insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>');s.value=n;document.getElementById('useradd').value='';}else{alert('添加失败');}}"
 "async function save(){let cols={},alarms=[];"
 "COLS.forEach(c=>cols[c]=document.getElementById('col_'+c).value.slice(1));"
 "let na=document.querySelectorAll('#alarms .alarm').length;"
@@ -284,13 +290,14 @@ static const char web_page[] =
 "document.getElementById('msg').textContent=j.ok?'✓ 已保存':'保存失败';}"
 "async function beep(){await fetch('/api/beep',{method:'POST'});}"
 "async function reboot(){if(confirm('确定重启 BB 机?')){await fetch('/api/reboot',{method:'POST'});document.getElementById('msg').textContent='重启中…';}}"
+"async function clrwifi(){if(confirm('清除已存 WiFi 并回到配网模式?')){await fetch('/api/clearwifi',{method:'POST'});location.reload();}}"
 "document.getElementById('scanwifi').onclick=async function(){let b=this;b.disabled=1;b.textContent='扫描中…';"
 "let l=document.getElementById('wifilist');l.innerHTML='';l.style.display='block';"
 "try{let j=await (await fetch('/api/scan',{method:'POST'})).json();"
 "if(!j.wifi_list||!j.wifi_list.length){l.innerHTML='<div style=padding:8px;color:#ffb070>没扫到 WiFi</div>';}"
 "else j.wifi_list.forEach(function(w){let d=document.createElement('div');"
 "d.style.cssText='padding:7px 10px;border-bottom:1px solid #2a4a2a;cursor:pointer;display:flex;justify-content:space-between;font-size:14px';"
-"d.innerHTML=(w.encrypted?'🔒 ':'🌐 ')+w.ssid+'<span style=color:#8a9a8a>'+w.rssi+'dBm</span>';"
+"d.innerHTML=(w.encrypted?'🔒 ':'🌐 ')+esc(w.ssid)+'<span style=color:#8a9a8a>'+w.rssi+'dBm</span>';"
 "d.onclick=function(){document.getElementById('ssid').value=w.ssid;document.getElementById('pass').focus();};l.appendChild(d);});}"
 "catch(e){l.innerHTML='<div style=padding:8px;color:#ffb070>扫描失败</div>';}"
 "b.disabled=0;b.textContent='重新扫描 WiFi';};"
@@ -300,17 +307,17 @@ static const char web_page[] =
 "async function gacha(){let j=await (await fetch('/api/gacha')).json();"
 "document.getElementById('gtotal').textContent=j.total;document.getElementById('gowned').textContent=j.owned;"
 "let h='';j.sinners.forEach(function(s){"
-"h+='<div style=color:#8fd48a;font-size:13px;margin:4px 0 2px>'+s.name+' '+s.owned+'/'+s.total+'</div>';"
-"s.items.forEach(function(it){h+='<div style=padding-left:14px;font-size:12px;color:'+(it.owned?'#c8e0c0':'#6a8a6a')+'>'+(it.owned?'★ ':'▢ ')+it.name+'</div>';});});"
+"h+='<div style=color:#8fd48a;font-size:13px;margin:4px 0 2px>'+esc(s.name)+' '+s.owned+'/'+s.total+'</div>';"
+"s.items.forEach(function(it){h+='<div style=padding-left:14px;font-size:12px;color:'+(it.owned?'#c8e0c0':'#6a8a6a')+'>'+(it.owned?'★ ':'▢ ')+esc(it.name)+'</div>';});});"
 "document.getElementById('gacha').innerHTML=h;}"
 "gacha();"
-"async function todoLoad(){let j=await (await fetch('/api/todo')).json();let h='';(j.todos||[]).forEach(function(t,i){h+='<div style=padding:6px 4px;border-bottom:1px solid #2a4a2a;display:flex;justify-content:space-between;align-items:center>'+(t.done?'<span style=color:#6a8a6a>✓ '+t.text+'</span>':'<span>'+t.text+'</span>')+'<span><button onclick=todoToggle('+i+') style=padding:3px 8px>'+(t.done?'恢复':'PASS')+'</button><button onclick=todoDel('+i+') style=padding:3px 8px>删除</button></span></div>';});document.getElementById('todolist').innerHTML=h||'<div style=color:#6a8a6a>还没有待办</div>';}"
+"async function todoLoad(){let j=await (await fetch('/api/todo')).json();let h='';(j.todos||[]).forEach(function(t,i){h+='<div style=padding:6px 4px;border-bottom:1px solid #2a4a2a;display:flex;justify-content:space-between;align-items:center>'+(t.done?'<span style=color:#6a8a6a>✓ '+esc(t.text)+'</span>':'<span>'+esc(t.text)+'</span>')+'<span><button onclick=todoToggle('+i+') style=padding:3px 8px>'+(t.done?'恢复':'PASS')+'</button><button onclick=todoDel('+i+') style=padding:3px 8px>删除</button></span></div>';});document.getElementById('todolist').innerHTML=h||'<div style=color:#6a8a6a>还没有待办</div>';}"
 "async function todoAdd(){let t=document.getElementById('txt').value;if(!t)return;await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'add',text:t})});document.getElementById('txt').value='';todoLoad();}"
 "async function todoToggle(i){await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'toggle',idx:i})});todoLoad();}"
 "async function todoDel(i){await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'del',idx:i})});todoLoad();}"
 "async function todoClear(){if(confirm('清空全部待办?')){await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'clear'})});todoLoad();}}"
 "async function devst(){let j=await (await fetch('/api/status')).json();"
-"document.getElementById('devst').innerHTML='电量 '+(j.battery<0?'未接电池':j.battery+'%')+' · 空闲堆 '+j.heap+'B<br>开机 '+j.boot+' 次 · IP '+j.ip+'<br>WiFi '+(j.wifi?'已连':'未连')+' · '+j.ssid+'<br>时间 '+j.date+' '+j.time+'<br>天气 '+j.weather;}"
+"document.getElementById('devst').innerHTML='电量 '+(j.battery<0?'未接电池':j.battery+'%')+' · 空闲堆 '+j.heap+'B<br>开机 '+j.boot+' 次 · IP '+j.ip+'<br>WiFi '+(j.wifi?'已连':'未连')+' · '+esc(j.ssid)+'<br>时间 '+j.date+' '+j.time+'<br>天气 '+esc(j.weather);}"
 "devst();"
 "todoLoad();"
 "load();</script></body></html>";
@@ -380,10 +387,11 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
     {
         cJSON *wifi = cJSON_CreateObject();
         cJSON_AddStringToObject(wifi, "ssid", NET_GetSsid());
-        cJSON_AddStringToObject(wifi, "pass", NET_GetPass());
+        /* 凭据脱敏: 密码/key 不回传明文; 已配置->掩码"********"(保存时保持), 未配置->空 */
+        cJSON_AddStringToObject(wifi, "pass", (NET_GetPass()[0]) ? WEB_SECRET_MASK : "");
         cJSON_AddItemToObject(root, "wifi", wifi);
         cJSON_AddStringToObject(root, "city", NET_GetCity());
-        cJSON_AddStringToObject(root, "key", NET_GetKey());
+        cJSON_AddStringToObject(root, "key", (NET_GetKey()[0]) ? WEB_SECRET_MASK : "");
         cJSON_AddStringToObject(root, "user", INS_UserName());
         {
             /* 使用者列表(与设备端子菜单一致, 网页下拉选择) */
@@ -581,9 +589,15 @@ static int web_apply_net(cJSON *root)
     if (key)
     {
         if (!cJSON_IsString(key) || !web_utf8_valid(key->valuestring, 47)) return 0;
-        NET_SetKey(key->valuestring);   /* 留空由 NET_SetKey 回退内置默认 */
+        if (strcmp(key->valuestring, WEB_SECRET_MASK) != 0)
+            NET_SetKey(key->valuestring);   /* 掩码=保持原 key; 空=不配置天气 */
     }
-    if (ssid) NET_SetWifi(ssid, pass);
+    if (ssid)
+    {
+        /* 掩码密码=保持不变: 仅当用户明确输入新密码(覆盖)时才改; 空=清空密码(开放网络) */
+        if (strcmp(pass, WEB_SECRET_MASK) != 0) NET_SetWifi(ssid, pass);
+        else NET_SetWifi(ssid, NET_GetPass());   /* 密码未动: 沿用已存密码(兼容只换 SSID) */
+    }
     return 1;
 }
 
@@ -1076,6 +1090,15 @@ static esp_err_t web_api_user_add(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 清除已存 WiFi: 回纯 AP 配网模式(配置页"清除"按钮) */
+static esp_err_t web_api_clearwifi(httpd_req_t *req)
+{
+    NET_ClearWifi();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":1}");
+    return ESP_OK;
+}
+
 /* 手机连上热点的 captive portal 探测路径 -> 直接返回配置页(自动弹出, 免手输IP) */
 static esp_err_t web_captive(httpd_req_t *req)
 {
@@ -1091,7 +1114,7 @@ void WEB_Init(void)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 16384;          /* 大栈: 解析 + 大JSON响应 */
-    cfg.max_uri_handlers = 20;       /* 主10 + captive portal 探测 7 + 余量 */
+    cfg.max_uri_handlers = 24;       /* 主13 + captive portal 探测 7 + 余量 */
     cfg.max_open_sockets = 4;        /* 单手机够用, 少占堆 */
     cfg.lru_purge_enable = true;
     httpd_handle_t server = NULL;
@@ -1115,6 +1138,7 @@ void WEB_Init(void)
     httpd_uri_t r10 = { .uri = "/api/todo",  .method = HTTP_POST, .handler = web_api_todo_post,   .user_ctx = NULL };
     httpd_uri_t r11 = { .uri = "/api/status", .method = HTTP_GET, .handler = web_api_status,      .user_ctx = NULL };
     httpd_uri_t r12 = { .uri = "/api/user",   .method = HTTP_POST, .handler = web_api_user_add,   .user_ctx = NULL };
+    httpd_uri_t r13 = { .uri = "/api/clearwifi", .method = HTTP_POST, .handler = web_api_clearwifi, .user_ctx = NULL };
     httpd_register_uri_handler(server, &r1);
     httpd_register_uri_handler(server, &r2);
     httpd_register_uri_handler(server, &r3);
@@ -1127,6 +1151,7 @@ void WEB_Init(void)
     httpd_register_uri_handler(server, &r10);
     httpd_register_uri_handler(server, &r11);
     httpd_register_uri_handler(server, &r12);
+    httpd_register_uri_handler(server, &r13);
 
     /* captive portal 探测路径(安卓/iOS/Windows): 全返回配置页, 手机连热点自动弹出 */
     {

@@ -520,7 +520,7 @@ static void mpu_task(void *arg)
 void MPU_Start(void *key_q)
 {
     mpu_q = (QueueHandle_t)key_q;
-    xTaskCreate(mpu_task, "mpu", 3072, NULL, 4, &mpu_task_h);
+    xTaskCreate(mpu_task, "mpu", 4096, NULL, 4, &mpu_task_h);   /* 4096: 任务内含 printf/协议解析, 3072 偏紧 */
 }
 
 /* ================= 「平衡」实时页(设置 -> 平衡, 由 UI 主任务每循环驱动) =================
