@@ -318,5 +318,9 @@ void ANS_FromText(uint8_t cat, const char *text)   /* 网页覆盖整类答案(�
         p = nl + 1;
     }
     ans_list_n[cat] = n;
-    ans_list_save(cat);
+    ans_list_save(cat);                     /* 空串: 只擦 NVS 键(恢复内置的语义) */
+    if (n == 0)
+    {
+        ans_list_load(cat);                 /* 立即回填内置答案: 防"抽答案"静默失效(0 条时选该类按 OK 无反应)直到重启 */
+    }
 }
