@@ -122,6 +122,8 @@ static void net_weather_parse(const char *json)
     n = daily ? cJSON_GetArraySize(daily) : 0;
     if (n > NET_WEATHER_DAYS) n = NET_WEATHER_DAYS;
 
+    memset(net_w, 0, sizeof(net_w));   /* 清残留: 解析跳过槽不再把上次/空数据显示为有效(C1) */
+    uint8_t filled = 0;
     for (i = 0; i < n; i++)
     {
         cJSON *date, *text, *text_n, *high, *low, *hum;
@@ -141,46 +143,47 @@ static void net_weather_parse(const char *json)
         /* date "2026-08-12" -> "08-12" */
         if (strlen(date->valuestring) >= 10)
         {
-            net_w[i].date[0] = date->valuestring[5];
-            net_w[i].date[1] = date->valuestring[6];
-            net_w[i].date[2] = '-';
-            net_w[i].date[3] = date->valuestring[8];
-            net_w[i].date[4] = date->valuestring[9];
-            net_w[i].date[5] = '\0';
+            net_w[filled].date[0] = date->valuestring[5];
+            net_w[filled].date[1] = date->valuestring[6];
+            net_w[filled].date[2] = '-';
+            net_w[filled].date[3] = date->valuestring[8];
+            net_w[filled].date[4] = date->valuestring[9];
+            net_w[filled].date[5] = '\0';
         }
         else
         {
-            strncpy(net_w[i].date, date->valuestring, sizeof(net_w[i].date) - 1);
-            net_w[i].date[sizeof(net_w[i].date) - 1] = '\0';
+            strncpy(net_w[filled].date, date->valuestring, sizeof(net_w[filled].date) - 1);
+            net_w[filled].date[sizeof(net_w[filled].date) - 1] = '\0';
         }
-        strncpy(net_w[i].text_day, text->valuestring, sizeof(net_w[i].text_day) - 1);
-        net_w[i].text_day[sizeof(net_w[i].text_day) - 1] = '\0';
+        strncpy(net_w[filled].text_day, text->valuestring, sizeof(net_w[filled].text_day) - 1);
+        net_w[filled].text_day[sizeof(net_w[filled].text_day) - 1] = '\0';
         if (text_n && cJSON_IsString(text_n) && text_n->valuestring[0])
         {
-            strncpy(net_w[i].text_night, text_n->valuestring, sizeof(net_w[i].text_night) - 1);
+            strncpy(net_w[filled].text_night, text_n->valuestring, sizeof(net_w[filled].text_night) - 1);
         }
         else
         {
-            strncpy(net_w[i].text_night, net_w[i].text_day, sizeof(net_w[i].text_night) - 1);  /* 缺失回退白天 */
+            strncpy(net_w[filled].text_night, net_w[filled].text_day, sizeof(net_w[filled].text_night) - 1);  /* 缺失回退白天 */
         }
-        net_w[i].text_night[sizeof(net_w[i].text_night) - 1] = '\0';
-        strncpy(net_w[i].high, high->valuestring, sizeof(net_w[i].high) - 1);
-        net_w[i].high[sizeof(net_w[i].high) - 1] = '\0';
-        strncpy(net_w[i].low,  low->valuestring,  sizeof(net_w[i].low) - 1);
-        net_w[i].low[sizeof(net_w[i].low) - 1] = '\0';
+        net_w[filled].text_night[sizeof(net_w[filled].text_night) - 1] = '\0';
+        strncpy(net_w[filled].high, high->valuestring, sizeof(net_w[filled].high) - 1);
+        net_w[filled].high[sizeof(net_w[filled].high) - 1] = '\0';
+        strncpy(net_w[filled].low,  low->valuestring,  sizeof(net_w[filled].low) - 1);
+        net_w[filled].low[sizeof(net_w[filled].low) - 1] = '\0';
         if (hum && cJSON_IsString(hum) && hum->valuestring[0])
         {
-            strncpy(net_w[i].humidity, hum->valuestring, sizeof(net_w[i].humidity) - 1);
+            strncpy(net_w[filled].humidity, hum->valuestring, sizeof(net_w[filled].humidity) - 1);
         }
         else
         {
-            strcpy(net_w[i].humidity, "--");
+            strcpy(net_w[filled].humidity, "--");
         }
-        net_w[i].humidity[sizeof(net_w[i].humidity) - 1] = '\0';
+        net_w[filled].humidity[sizeof(net_w[filled].humidity) - 1] = '\0';
+        filled++;                            /* 成功填充的槽计数: 写入始终连续无空洞, net_weather_n 语义正确 */
     }
 
-    net_weather_n = (uint8_t)n;   /* 记实际天数: 只回 1~2 天时 Count/DayStr 不读空槽 */
-    if (n > 0)
+    net_weather_n = filled;   /* 只记成功填充槽: 失败/跳过槽不再泄露陈旧数据(修 C1) */
+    if (filled > 0)
     {
         net_weather_ok = 1;
         net_weather_at = time(NULL);   /* 记拉取时刻(旧数据显示"更新于…"用) */

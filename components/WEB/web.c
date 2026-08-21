@@ -698,6 +698,131 @@ static int web_apply_decode(cJSON *root)
     return 1;
 }
 
+/* ================= cfg 保存事务化(B2) =================
+ * 先整体校验(零副作用), 全部合法后才逐个应用落库:
+ * 避免"前面字段已写 NVS、后面字段非法返回 400"的半保存. */
+static int web_cfg_validate(cJSON *root)
+{
+    cJSON *colors = cJSON_GetObjectItem(root, "colors");
+    if (colors)
+    {
+        uint8_t i;
+        if (!cJSON_IsObject(colors)) return 0;
+        for (i = 0; i < WEB_COLOR_N; i++)
+        {
+            cJSON *it = cJSON_GetObjectItem(colors, web_colors[i].name);
+            if (it && (!cJSON_IsString(it) || !web_hex_color_valid(it->valuestring))) return 0;
+        }
+    }
+    cJSON *ins = cJSON_GetObjectItem(root, "ins");
+    if (ins)
+    {
+        if (!cJSON_IsString(ins) || !web_ins_text_valid(ins->valuestring)) return 0;
+    }
+    cJSON *ans = cJSON_GetObjectItem(root, "ans");
+    if (ans)
+    {
+        uint8_t c;
+        static const char *keys[ANS_CAT_N] = { "c0", "c1", "c2", "c3" };
+        if (!cJSON_IsObject(ans)) return 0;
+        for (c = 0; c < ANS_CAT_N; c++)
+        {
+            cJSON *it = cJSON_GetObjectItem(ans, keys[c]);
+            if (it && (!cJSON_IsString(it) || !web_ans_text_valid(it->valuestring))) return 0;
+        }
+    }
+    cJSON *alarms = cJSON_GetObjectItem(root, "alarms");
+    if (alarms)
+    {
+        int n, i;
+        if (!cJSON_IsArray(alarms)) return 0;
+        n = cJSON_GetArraySize(alarms);
+        if (n < 0 || n > (int)ALM_Max()) return 0;
+        for (i = 0; i < n; i++)
+        {
+            cJSON *a = cJSON_GetArrayItem(alarms, i);
+            cJSON *en, *hh, *mm, *days, *once;
+            if (!cJSON_IsObject(a)) return 0;
+            en = cJSON_GetObjectItem(a, "en");
+            hh = cJSON_GetObjectItem(a, "hh");
+            mm = cJSON_GetObjectItem(a, "mm");
+            days = cJSON_GetObjectItem(a, "days");
+            once = cJSON_GetObjectItem(a, "once");
+            if (!cJSON_IsNumber(en) || !cJSON_IsNumber(hh) || !cJSON_IsNumber(mm)) return 0;
+            if ((en->valueint != 0 && en->valueint != 1) ||
+                hh->valueint < 0 || hh->valueint > 23 ||
+                mm->valueint < 0 || mm->valueint > 59) return 0;
+            if (days && (!cJSON_IsNumber(days) || days->valueint < 0 || days->valueint > 127)) return 0;
+            if (once && (!cJSON_IsNumber(once) || (once->valueint != 0 && once->valueint != 1))) return 0;
+        }
+    }
+    cJSON *wifi = cJSON_GetObjectItem(root, "wifi");
+    if (wifi)
+    {
+        cJSON *s, *p;
+        if (!cJSON_IsObject(wifi)) return 0;
+        s = cJSON_GetObjectItem(wifi, "ssid");
+        p = cJSON_GetObjectItem(wifi, "pass");
+        if (!s || !p || !cJSON_IsString(s) || !cJSON_IsString(p)) return 0;
+        if (s->valuestring[0] == '\0' || !web_utf8_valid(s->valuestring, 32)) return 0;
+        if (!web_utf8_valid(p->valuestring, 64)) return 0;
+    }
+    cJSON *city = cJSON_GetObjectItem(root, "city");
+    if (city && (!cJSON_IsString(city) || !web_utf8_valid(city->valuestring, 23))) return 0;
+    cJSON *key = cJSON_GetObjectItem(root, "key");
+    if (key && (!cJSON_IsString(key) || !web_utf8_valid(key->valuestring, 47))) return 0;
+    cJSON *user = cJSON_GetObjectItem(root, "user");
+    if (user)
+    {
+        if (!cJSON_IsString(user) || user->valuestring[0] == '\0') return 0;
+        if (!web_utf8_valid(user->valuestring, INS_USER_NAME_MAX - 1) ||
+            strchr(user->valuestring, '\n') || strchr(user->valuestring, '\r')) return 0;
+    }
+    cJSON *beep = cJSON_GetObjectItem(root, "beep");
+    if (beep && (!cJSON_IsNumber(beep) || (beep->valueint != 0 && beep->valueint != 1))) return 0;
+    cJSON *vol = cJSON_GetObjectItem(root, "vol");
+    if (vol && (!cJSON_IsNumber(vol) || vol->valueint < 0 || vol->valueint > 100)) return 0;
+    cJSON *timeout = cJSON_GetObjectItem(root, "timeout");
+    if (timeout)
+    {
+        int v;
+        if (!cJSON_IsNumber(timeout)) return 0;
+        v = timeout->valueint;
+        if (v != 0 && v != 30 && v != 60 && v != 300) return 0;
+    }
+    cJSON *on = cJSON_GetObjectItem(root, "oracle_n");
+    if (on)
+    {
+        int v;
+        if (!cJSON_IsNumber(on)) return 0;
+        v = on->valueint;
+        if (v != 0 && v != 1 && v != 3 && v != 5 && v != 9) return 0;
+    }
+    cJSON *ow = cJSON_GetObjectItem(root, "oracle_win");
+    if (ow && (!cJSON_IsNumber(ow) || ow->valueint < 0 || ow->valueint > 3)) return 0;
+    cJSON *cur = cJSON_GetObjectItem(root, "cursor");
+    if (cur && (!cJSON_IsNumber(cur) || cur->valueint < 0 || cur->valueint >= UI_CURSOR_N)) return 0;
+    cJSON *garble = cJSON_GetObjectItem(root, "garble");
+    if (garble)
+    {
+        cJSON *def = cJSON_GetObjectItem(garble, "def");
+        cJSON *gb  = cJSON_GetObjectItem(garble, "gb");
+        cJSON *dl  = cJSON_GetObjectItem(garble, "dl");
+        cJSON *rv  = cJSON_GetObjectItem(garble, "rv");
+        cJSON *fnt = cJSON_GetObjectItem(garble, "fnt");
+        if (!cJSON_IsObject(garble)) return 0;
+        if (def || gb)
+        {
+            if (!def || !gb || !cJSON_IsString(def) || !cJSON_IsString(gb) ||
+                !web_hex_color_valid(def->valuestring) || !web_hex_color_valid(gb->valuestring)) return 0;
+        }
+        if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5)) return 0;
+        if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10)) return 0;
+        if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 2)) return 0;
+    }
+    return 1;
+}
+
 static esp_err_t web_api_cfg_post(httpd_req_t *req)
 {
     int total = req->content_len, recvd = 0;
@@ -735,7 +860,15 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* 按配置项逐个应用(各 web_apply_* 见上文; 非法字段返回400) */
+    /* B2: 先整体校验(零副作用), 通过后才逐个应用落库——非法输入不再"改一半还400" */
+    if (!web_cfg_validate(root))
+    {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid field");
+        return ESP_OK;
+    }
+
+    /* 按配置项逐个应用(已整体校验通过, apply 链不会半路失败) */
     if (!web_apply_colors(root) || !web_apply_ins(root) || !web_apply_ans(root) ||
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||

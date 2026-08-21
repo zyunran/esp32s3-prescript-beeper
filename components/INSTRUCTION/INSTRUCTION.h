@@ -7,15 +7,15 @@
 /* 运行期指令库/使用者上限(与 WEB 输入校验共用) */
 #define INS_PRESET_MAX      40
 #define INS_PRESET_LEN      110
-#define INS_USER_NAME_MAX   16
+#define INS_USER_NAME_MAX   24  /* 当前使用者名最大字节数(与使用者列表上限 UI_USER_NAME_MAX 对齐) */
 
 /* ================= 破译/蜂鸣可调参数(改这里即可调整) ================= */
 /* 破译显示 */
 /* 破译真字色/乱码色/速度(运行时可改, WEB配置, 存NVS "ins2") */
-extern uint16_t INS_SCR_DEFAULT;      /* 破译真字色 */
-extern uint16_t INS_SCR_GARBLE;       /* 未破译乱码色 */
-extern uint16_t INS_SCR_DELAY_MS;     /* 乱码刷新间隔 ms */
-extern uint16_t INS_REVEAL_DELAY_MS;  /* 逐字揭示间隔 ms(越大解码越慢) */
+extern volatile uint16_t INS_SCR_DEFAULT;      /* 破译真字色 */
+extern volatile uint16_t INS_SCR_GARBLE;       /* 未破译乱码色 */
+extern volatile uint16_t INS_SCR_DELAY_MS;     /* 乱码刷新间隔 ms */
+extern volatile uint16_t INS_REVEAL_DELAY_MS;  /* 逐字揭示间隔 ms(越大解码越慢) */
 #define INS_SCR_FRAMES      30        /* 全乱码帧数(越大乱码越久) */
 #define INS_REVERT_PCT      10         /* 已解码字回退乱码概率% */
 #define INS_SLIDE_START     10         /* 新解码字起始右移 px */

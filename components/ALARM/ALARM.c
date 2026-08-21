@@ -260,11 +260,15 @@ static void alm_list_refresh(void)
     uint8_t i, n = 0;
     for (i = 0; i < ALM_MAX; i++)
     {
-        if (!alm[i].en) continue;        /* 未设的槽不显示 */
+        /* 已设(开启 或 曾设置过)的槽都显示并标 开/关; 从未设置的槽隐藏
+         * (days==0 才是"从未设置": 所有写入路径 days≥1, 删除/memset 才为 0;
+         *   避免把"关闭的 00:00 闹钟"误判为未设置而无法重新开启) */
+        if (alm[i].days == 0) continue;
         alm_list_map[n] = i;
         snprintf(alm_list_items[n], sizeof(alm_list_items[n]),
-                 "%02u:%02u %s 开", (unsigned)alm[i].hh, (unsigned)alm[i].mm,
-                 alm_mode_label(alm[i].days, alm[i].once));
+                 "%02u:%02u %s %s", (unsigned)alm[i].hh, (unsigned)alm[i].mm,
+                 alm_mode_label(alm[i].days, alm[i].once),
+                 alm[i].en ? "开" : "关");
         n++;
     }
     alm_list_n = n;
@@ -287,7 +291,9 @@ static void alm_list_key_ok(void)
         alm_menu_enter();
         return;
     }
-    alm[alm_list_map[sel]].en = 0;  /* 关闭: 从列表消失(网页端可再开启) */
+    /* 开关切换: 关闭的闹钟仍在列表(标"关"), 可再次开启(不再"关了就从设备消失") */
+    alm[alm_list_map[sel]].en = alm[alm_list_map[sel]].en ? 0 : 1;
+    if (alm[alm_list_map[sel]].en) alm[alm_list_map[sel]].lastday = 0;   /* 重新开启: 重置当日去重 */
     alm_save();
     alm_list_enter();               /* 重建列表 */
 }

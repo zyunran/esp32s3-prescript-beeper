@@ -191,7 +191,7 @@ const char *const *UI_UserList(uint8_t *count)
     return (const char *const *)ui_user_ptr;
 }
 
-static char ui_user_title[16] = "使用者";   /* 主菜单「使用者」项动态标题 = 当前使用者名(UI_SetUserTitle 更新) */
+static char ui_user_title[UI_USER_NAME_MAX] = "使用者";   /* 主菜单「使用者」项动态标题 = 当前使用者名(UI_SetUserTitle 更新) */
 
 ui_menu_cfg_t ui_menu_cfg[UI_MENU_COUNT] = {
     [UI_MENU_INS]     = { "神谕", UI_FN_INS,      0, NULL,              0 },

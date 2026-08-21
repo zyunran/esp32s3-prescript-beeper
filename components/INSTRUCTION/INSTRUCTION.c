@@ -28,10 +28,10 @@ static void ins_lock(void)   { if (ins_mux) xSemaphoreTakeRecursive(ins_mux, por
 static void ins_unlock(void) { if (ins_mux) xSemaphoreGiveRecursive(ins_mux); }
 
 /* 破译参数(运行时可改, 默认护眼风格; WEB配置存NVS) */
-uint16_t INS_SCR_DEFAULT     = 0xE249;   /* 破译真字: 清晰红 */
-uint16_t INS_SCR_GARBLE      = 0x651D;   /* 未破译乱码: 亮钢蓝 */
-uint16_t INS_SCR_DELAY_MS    = 18;       /* 乱码刷新间隔 ms */
-uint16_t INS_REVEAL_DELAY_MS = 80;       /* 逐字揭示间隔 ms */
+volatile uint16_t INS_SCR_DEFAULT     = 0xE249;   /* 破译真字: 清晰红 */
+volatile uint16_t INS_SCR_GARBLE      = 0x651D;   /* 未破译乱码: 亮钢蓝 */
+volatile uint16_t INS_SCR_DELAY_MS    = 18;       /* 乱码刷新间隔 ms */
+volatile uint16_t INS_REVEAL_DELAY_MS = 80;       /* 逐字揭示间隔 ms */
 
 /* 破译完成提示蜂鸣(定义于下文蜂鸣器节) */
 static void ins_done_beep(void);
@@ -589,10 +589,19 @@ void INS_Init(void)
         nvs_handle_t h;
         if (nvs_open("ins2", NVS_READONLY, &h) == ESP_OK)
         {
-            nvs_get_u16(h, "def", &INS_SCR_DEFAULT);
-            nvs_get_u16(h, "gb", &INS_SCR_GARBLE);
-            nvs_get_u16(h, "dl", &INS_SCR_DELAY_MS);
-            nvs_get_u16(h, "rv", &INS_REVEAL_DELAY_MS);
+            /* volatile 全局不可直接给 nvs_get_u16(去限定告警): 先经临时变量, 失败保持默认 */
+            {
+                uint16_t vd = INS_SCR_DEFAULT, vg = INS_SCR_GARBLE;
+                uint16_t vdl = INS_SCR_DELAY_MS, vrv = INS_REVEAL_DELAY_MS;
+                nvs_get_u16(h, "def", &vd);
+                nvs_get_u16(h, "gb", &vg);
+                nvs_get_u16(h, "dl", &vdl);
+                nvs_get_u16(h, "rv", &vrv);
+                INS_SCR_DEFAULT = vd;
+                INS_SCR_GARBLE = vg;
+                INS_SCR_DELAY_MS = vdl;
+                INS_REVEAL_DELAY_MS = vrv;
+            }
             nvs_get_u8(h, "fnt", &ins_font);
             {
                 size_t n = sizeof(ins_user);

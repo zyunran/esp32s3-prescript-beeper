@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include <stddef.h>   /* offsetof(_Static_assert 用) */
 #include <string.h>
 #include <stdio.h>
 
@@ -222,6 +223,12 @@ typedef struct {
     uint8_t  coins;      /* 硬币数 */
     int8_t   power;      /* 硬币威力(负=掷正面反而减点) */
 } coin_skill_t;
+
+/* gacha_pick_gold 把 coin_skill_t* 当 gacha_card_t* 用(读 sinner/name):
+ * 编译期把关两者前两字段布局一致, 防未来加字段时静默错位(C2) */
+_Static_assert(offsetof(coin_skill_t, sinner) == offsetof(gacha_card_t, sinner) &&
+               offsetof(coin_skill_t, name)   == offsetof(gacha_card_t, name),
+               "coin_skill_t 前两字段布局必须与 gacha_card_t 一致");
 
 /* 罪人名(角色, 12 人) */
 static const char *coin_sinners[] = {

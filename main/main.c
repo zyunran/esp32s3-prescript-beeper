@@ -492,7 +492,7 @@ static void on_event(uint8_t evt)
                     INS_SetUserName(cfg->items[sel]);
                     UI_SetUserTitle(cfg->items[sel]);   /* 主菜单标题实时显示当前名(如但丁) */
                     {
-                        char ubuf[32];
+                        char ubuf[48];   /* "当前使用者\n"(16B) + 名字(≤23B) */
                         snprintf(ubuf, sizeof(ubuf), "当前使用者\n%s", cfg->items[sel]);
                         INS_Show(ubuf);
                     }
@@ -655,7 +655,7 @@ static void ui_task(void *arg)
 {
     uint32_t oracle_last = 0;   /* 神谕检查节流 */
     uint32_t bat_last = 0;      /* 电量读取节流 */
-    static char ui_user_last[16];   /* 主界面已显示的使用者名(变化才重绘) */
+    static char ui_user_last[INS_USER_NAME_MAX];   /* 主界面已显示的使用者名(变化才重绘) */
     last_act = (uint32_t)(esp_timer_get_time() / 1000);
     scr_on = 1;
     strncpy(ui_user_last, INS_UserName(), sizeof(ui_user_last) - 1);
