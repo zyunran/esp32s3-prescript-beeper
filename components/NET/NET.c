@@ -790,6 +790,7 @@ void NET_Connect(void)
 
 /* ================= 对外查询 ================= */
 uint8_t NET_WifiOk(void) { return net_wifi_ok; }
+uint8_t NET_SessionOn(void) { return net_radio_on; }   /* 联网会话进行中(射频开=会话在) */
 uint8_t NET_TimeOk(void) { return net_time_ok; }
 
 /* ================= 联网会话停止(路径1) ================= */

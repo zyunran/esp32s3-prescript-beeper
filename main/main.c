@@ -52,9 +52,10 @@
 #define LONG_PRESS_MS   600
 #define REPEAT_PRESS_MS 150
 
-/* 路径1 联网会话空闲超时(ms): 连网后按键/网页(NET_Touch)都静默超此时长 -> 自动断(省电+缩暴露面).
- * 手动断开: 再按 联网->连接网络(乱码显示"已断开网络"). 网页只读不操作也超时, 属预期. */
+/* 路径1 联网会话空闲超时(ms): 连网后按键/网页(NET_Touch)都静默超此时长 -> 自动断(省电+缩暴露面). */
 #define NET_SESSION_IDLE_MS  60000
+/* 开启联网后, 超过此时长仍没连上则判定"未连上"并反馈 */
+#define NET_CONNECT_RESULT_MS  12000
 
 /* ================= 界面状态机 ================= */
 typedef enum { ST_MAIN, ST_SUB, ST_INS, ST_GACHA, ST_TIMER, ST_ALARM, ST_INFO, ST_TODO, ST_MPU, ST_ASK } ui_state_t;
@@ -64,7 +65,8 @@ static TaskHandle_t input_task_h = NULL;   /* 按键轮询任务句柄(待机挂
 static ui_state_t ui_state = ST_MAIN;
 static uint8_t sub_kind;   /* 当前所在子菜单对应的主菜单项索引 */
 static char daily_last[8] = {0};   /* 每日签: 上次签到的日期 "MM-DD" */
-static uint8_t wifi_ip_pending = 0;   /* 校准后等连上显示 IP */
+static uint8_t net_conn_pending = 0;    /* 联网开关 开启后等结果: 连上→"已连接" / 超时→"未连上" */
+static uint32_t net_conn_deadline = 0;  /* 结果判定超时时刻(esp_timer ms) */
 static uint8_t reset_pending = 0;     /* 初始化确认中: 再按OK清除NVS重启 */
 static uint8_t set_info_active = 0;   /* 1=正在"系统信息"翻页页(上下键翻页, 其他键返回) */
 
@@ -151,6 +153,12 @@ static void ui_enter_submenu(uint8_t kind, uint8_t cur)
     {
         UI_SubMenuInitItems(cfg->items, cfg->item_count);
         if (cur < cfg->item_count) UI_SubMenuSetCur(cur);
+        if (cfg->fn == UI_FN_NET)   /* 联网开关项: 进入子菜单即把标签刷新为 开/关 实时状态 */
+        {
+            char nbuf[16];
+            snprintf(nbuf, sizeof(nbuf), "联网:%s", NET_SessionOn() ? "开" : "关");
+            UI_SubMenuSetItem(UI_NET_CONNECT, nbuf);
+        }
     }
     else
     {
@@ -219,11 +227,12 @@ static void ui_enter_main_submenu(uint8_t sel, uint8_t cur)
     ui_enter_submenu(sel, cur);
 }
 
-/* 显示当前 IP(复用乱码破译, 任意键返回); 手机访问网页配置页用 */
-static void show_wifi_ip(void)
+/* 显示当前 IP(乱码破译, 任意键返回); 供 联网->显示IP 用(手机开配置页需要 IP) */
+static void show_ip_screen(void)
 {
-    static char buf[40];
-    snprintf(buf, sizeof(buf), "已连接\nIP:%s", NET_IpStr());
+    char buf[40];
+    const char *ip = NET_IpStr();
+    snprintf(buf, sizeof(buf), "IP:%s", ip[0] ? ip : "未联网");
     INS_Show(buf);
     ui_push(ST_INS);
 }
@@ -384,26 +393,27 @@ static void on_event(uint8_t evt)
                 {
                     ui_pop();
                 }
-                else if (cfg->fn == UI_FN_NET && sel == UI_NET_CONNECT)  /* 联网-连接/断开(联网会话开关) */
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_CONNECT)  /* 联网开关: 开/关联网会话 */
                 {
-                    if (NET_WifiOk())   /* 已在网: 再按 = 主动断开会话(路径1 手动按需断) */
+                    if (NET_SessionOn())   /* 会话进行中(射频开): 按 = 关闭 */
                     {
-                        wifi_ip_pending = 0;                /* 取消"连上自动显IP"挂起 */
+                        net_conn_pending = 0;               /* 取消"等结果"挂起 */
                         NET_SessionEnd();
-                        INS_Show("已断开网络");              /* 乱码破译显示, 任意键返回 */
+                        INS_Show("已关闭联网");               /* 乱码显示, 任意键返回 */
                         ui_push(ST_INS);
                     }
-                    else if (!NET_GetSsid()[0])   /* 从未配过 WiFi(纯 AP 配网模式): 就地提示, 不再静默 */
+                    else if (!NET_GetSsid()[0])   /* 从未配过 WiFi(纯 AP 配网模式): 引导配网 */
                     {
                         UI_FullScreen("未配置WiFi", "先 开启配网 再连手机设WiFi");
                         ui_push(ST_INFO);                    /* 任意键回联网子菜单 */
                     }
-                    else
+                    else   /* 开启: 立即反馈"正在连接", 结果(已连接/未连上)由 ui_task 挂起回调在同一屏换内容 */
                     {
                         NET_Connect();
-                        ui_to_main();
-                        if (NET_WifiOk()) show_wifi_ip();   /* 已连上: 直接显示IP */
-                        else wifi_ip_pending = 1;           /* 未连上: 连上后自动显示 */
+                        net_conn_pending = 1;               /* 等结果: 连上→已连接 / 超时→未连上 */
+                        net_conn_deadline = (uint32_t)(esp_timer_get_time() / 1000) + NET_CONNECT_RESULT_MS;
+                        INS_Show("正在连接…");
+                        ui_push(ST_INS);                    /* 任意键可先退回; 结果会自动换在这屏 */
                     }
                 }
                 else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-开启配网: 开/关配网热点 */
@@ -451,6 +461,10 @@ static void on_event(uint8_t evt)
                     }
                     INS_Show(wbuf);   /* 复用乱码破译: 逐字显示, 与指令一致 */
                     ui_push(ST_INS);
+                }
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_IP)  /* 联网-显示IP: 手机开配置页用 */
+                {
+                    show_ip_screen();   /* "IP:xxx" 或 "未联网"(乱码显示, 任意键返回) */
                 }
                 else if (cfg->fn == UI_FN_SETTING)   /* 设置-各项: 循环/切换(组件处理) */
                 {
@@ -728,14 +742,27 @@ static void ui_task(void *arg)
                     last_act = now;
                 }
             }
-            /* 校准后等连上: 自动显示 IP */
-            if (wifi_ip_pending && NET_WifiOk())
+            /* 联网开关 开启后等结果: 连上→"已连接" / 超时→"未连上"(正在连接屏就地换内容, 不残留) */
+            if (net_conn_pending)
             {
-                wifi_ip_pending = 0;
-                show_wifi_ip();
-                lcd_on();
-                scr_on = 1;
-                last_act = now;
+                if (NET_WifiOk())
+                {
+                    net_conn_pending = 0;
+                    if (ui_state != ST_INS) ui_push(ST_INS);   /* 已退回就重开一屏, 否则就地换 */
+                    INS_Show("已连接");
+                    lcd_on();
+                    scr_on = 1;
+                    last_act = now;
+                }
+                else if (now >= net_conn_deadline)
+                {
+                    net_conn_pending = 0;
+                    if (ui_state != ST_INS) ui_push(ST_INS);
+                    INS_Show("未连上");
+                    lcd_on();
+                    scr_on = 1;
+                    last_act = now;
+                }
             }
             if (ORACLE_Due())
             {

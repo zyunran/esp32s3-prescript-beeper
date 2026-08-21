@@ -75,9 +75,10 @@ static const uint8_t icon_cmd[] = {
  * 文字须在全字库 lcdzh.c 内, 或会显示成方框 */
 /* 自定义子菜单项(集中配置, 改这里即可改文字) */
 static const char *cfg_net_items[] = {
-    [UI_NET_CONNECT] = "连接网络",
+    [UI_NET_CONNECT] = "连接网络",   /* 标签进入子菜单后由 UI_SubMenuSetItem 动态改"联网:开/关" */
     [UI_NET_AP]      = "开启配网",
     [UI_NET_WEATHER] = "查看天气",
+    [UI_NET_IP]      = "显示IP",
     [UI_NET_EXIT]    = "退出",
 };
 static const char *cfg_ttl_items[] = {

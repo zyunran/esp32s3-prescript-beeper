@@ -17,6 +17,7 @@ void NET_Touch(void);                /* 会话活动续期(WEB 每请求调用, 
 uint32_t NET_SessionIdleMs(void);    /* 距上次会话活动毫秒数(未联网返回 UINT32_MAX) */
 uint8_t NET_ApToggle(void);            /* 开启配网: 手动开/关配网热点(STA<->APSTA), 返回1=已开 */
 uint8_t NET_WifiOk(void);            /* 1=WiFi 已连上 */
+uint8_t NET_SessionOn(void);         /* 1=联网会话进行中(射频开): 供 联网开关 显示 开/关 */
 uint8_t NET_TimeOk(void);            /* 1=时间已同步 */
 void NET_TimeAdopt(void);            /* 采用外部有效时间(DS1302), 免联网即时显示 */
 const char *NET_IpStr(void);         /* 已连 WiFi 的 IP("192.168.1.5"; 未连="" ) */
