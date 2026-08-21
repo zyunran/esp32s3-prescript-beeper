@@ -231,7 +231,8 @@ static void ui_enter_main_submenu(uint8_t sel, uint8_t cur)
 static void show_ip_screen(void)
 {
     char buf[40];
-    const char *ip = NET_IpStr();
+    char ip[16];
+    NET_IpStrCopy(ip, sizeof(ip));               /* 拷贝版: 避免与 /api/status 共用静态缓冲时被覆写 */
     snprintf(buf, sizeof(buf), "IP:%s", ip[0] ? ip : "未联网");
     INS_Show(buf);
     ui_push(ST_INS);
@@ -724,8 +725,9 @@ static void ui_task(void *arg)
             /* 每日签: 开机/换日后, 时间有效且主界面空闲, 显示一次"今日指令" */
             if (ui_state == ST_MAIN && NET_TimeOk())
             {
-                const char *dd = NET_DateStr();
-                if (dd && strcmp(dd, "--") != 0 && strcmp(dd, daily_last) != 0)
+                char dd[8];
+                NET_DateStrCopy(dd, sizeof(dd));   /* 拷贝版: 防止与网页状态页并发读到静态缓冲 */
+                if (strcmp(dd, "--") != 0 && strcmp(dd, daily_last) != 0)
                 {
                     strncpy(daily_last, dd, sizeof(daily_last) - 1);
                     daily_last[sizeof(daily_last) - 1] = '\0';
@@ -891,8 +893,12 @@ static void ui_task(void *arg)
                 }
                 else
                 {
-                    UI_TimeSet(NET_DateStr(), NET_TimeStr(), NET_WeekStr());  /* 主页面左侧日期+星期+时间刷新(变化才重绘) */
-                    UI_WeatherSet(NET_WeatherStr());               /* 时钟下方天气(未就绪=NULL->清除) */
+                    char date[8], clk[12], week[8], wx[32];
+                    NET_DateStrCopy(date, sizeof(date));
+                    NET_TimeStrCopy(clk, sizeof(clk));
+                    NET_WeekStrCopy(week, sizeof(week));
+                    UI_TimeSet(date, clk, week);               /* 主页面左侧日期+星期+时间刷新(变化才重绘) */
+                    UI_WeatherSet(NET_WeatherStrCopy(wx, sizeof(wx)) ? wx : NULL);   /* 无/超期=NULL->清除 */
                 }
                 UI_WifiSet(NET_WifiOk());                      /* 左上角网络图标(绿=已连/灰=未连) */
                 if (now - bat_last >= 2000)                    /* 每2秒读一次电量(数值变化才重绘) */

@@ -37,7 +37,7 @@ void INS_ShowByIndex(uint8_t idx);      /* 显示预设指令(对应菜单项索
 void INS_ShowRandom(void);              /* 随机抽取一条预设指令并破译显示 */
 void INS_ShowGenerated(void);           /* 用模板现场生成随机指令(含当前使用者) */
 /* 当前使用者名称(神谕指令"致X:"对象; 默认李箱, 存 NVS "ins2"/"user") */
-const char *INS_UserName(void);
+const char *INS_UserName(void); /* 返回锁内快照(非 ins_user 本体), 请立即使用, 下次调用会复用该快照缓冲 */
 void INS_SetUserName(const char *name); /* 设使用者名称并保存 */
 void INS_GetParams(uint16_t *def, uint16_t *gb, uint16_t *dl, uint16_t *rv);  /* 破译参数读 */
 void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv);      /* 破译参数写(WEB) */

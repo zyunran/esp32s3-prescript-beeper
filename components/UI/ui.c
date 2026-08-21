@@ -253,7 +253,7 @@ static char   ui_time_clk[12];              /* "HH:MM:SS" */
 static uint8_t ui_time_valid = 0;
 static uint8_t ui_wifi_on = 0xFF;           /* WiFi 图标状态: 0/1=已设, 0xFF=未初始化 */
 static uint8_t ui_bat_pct = 0xFF;           /* 电量: 0-100=已设, 0xFF=未初始化 */
-static char   ui_weather[24];               /* "晴 36/24"(可能被截断的原始输入) */
+static char   ui_weather[32];               /* "晴 36/24"~"雷阵雨伴有冰雹 36/24"(29B+NUL; 显示前按像素再裁) */
 static char   ui_weather_src[sizeof(ui_weather)];  /* 最近一次输入原样(供变化判定, 见 UI_WeatherSet) */
 static uint8_t ui_weather_valid = 0;
 
@@ -860,7 +860,7 @@ static void ui_weather_clip_to(char *dst, size_t cap, const char *src)
 static void ui_weather_draw_text(void)
 {
     char clip[sizeof(ui_weather)];
-    ui_weather_clip_to(clip, sizeof(clip), ui_weather);   /* 截断过长串(3字天气词+湿度会超宽) */
+    ui_weather_clip_to(clip, sizeof(clip), ui_weather);   /* 按像素截断过长串(主屏天气区仅 ~106px, 长词+温度放不下) */
     fb_fill_rect(0, UI_WEATHER_Y, UI_TIME_CLEAR_W, UI_WEATHER_H, UI_COLOR_BG);
     fb_draw_string(UI_WEATHER_X, UI_WEATHER_Y, clip, UI_COLOR_TIME, UI_COLOR_BG,
                    0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);

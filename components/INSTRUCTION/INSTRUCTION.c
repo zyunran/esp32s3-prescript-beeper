@@ -127,6 +127,7 @@ static uint8_t ins_preset_count = 0;
 
 /* 当前使用者名称(神谕指令"致X:"对象; 默认李箱, NVS "ins2"/"user") */
 static char ins_user[INS_USER_NAME_MAX] = "李箱";
+static char ins_user_snap[INS_USER_NAME_MAX];   /* 读侧快照缓冲区: 返回给调用方的瞬时稳定副本 */
 
 /* ================= 破译状态 ================= */
 typedef struct {
@@ -633,10 +634,23 @@ void INS_Init(void)
     }
 }
 
-const char *INS_UserName(void) { return ins_user; }
+const char *INS_UserName(void)
+{
+    /* 锁内拷贝到独立快照再返回: 写侧可能用 memcpy 逐字节覆写 ins_user,
+     * 直接返回全局地址会让网页/UI 任务瞬时读到半截 UTF-8. */
+    ins_lock();
+    strncpy(ins_user_snap, ins_user, sizeof(ins_user_snap) - 1);
+    ins_user_snap[sizeof(ins_user_snap) - 1] = '\0';
+    ins_unlock();
+    return ins_user_snap;
+}
 
 void INS_SetUserName(const char *name)
 {
+    nvs_handle_t h;
+    /* 写侧加锁贯穿"内存更新 + NVS 落盘": 既防止并发写 ins_user 撕裂,
+     * 也避免两个写入方交叉落盘导致 NVS 最终值与内存最后一次写入不一致. */
+    ins_lock();
     /* 按 UTF-8 完整字符截断到缓冲(ins_user[24], 即 INS_USER_NAME_MAX): 绝不在多字节字符中间切断,
      * 避免超长使用者名(网页列表允许 23B)被截出非法 UTF-8 尾巴 */
     size_t n = strnlen(name, sizeof(ins_user) - 1);
@@ -653,13 +667,13 @@ void INS_SetUserName(const char *name)
     }
     ins_user[used] = '\0';
     if (ins_user[0] == '\0') strcpy(ins_user, "李箱");   /* 空回退默认 */
-    nvs_handle_t h;
     if (nvs_open("ins2", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_str(h, "user", ins_user);
         nvs_commit(h);
         nvs_close(h);
     }
+    ins_unlock();
 }
 
 /* ================= 随机指令生成器(按当前使用者定制) =================
@@ -685,9 +699,10 @@ static void ins_gen_render(const char *tpl, char *out, size_t outsz)
     {
         if (strncmp(p, "{USER}", 6) == 0)
         {
-            size_t ulen = strlen(ins_user);
+            const char *user = INS_UserName();   /* 锁内快照, 防与网页改使用者并发读到半截串 */
+            size_t ulen = strnlen(user, INS_USER_NAME_MAX - 1);
             size_t cp = (ulen < outsz - 1) ? ulen : (outsz - 1);
-            memcpy(out, ins_user, cp);
+            memcpy(out, user, cp);
             out += cp;
             outsz -= cp;
             p += 6;
@@ -933,7 +948,7 @@ void INS_Show(const char *text)
 void INS_ShowIns(const char *text)
 {
     char buf[INS_PRESET_LEN + INS_USER_NAME_MAX + 4];
-    const char *user = ins_user;
+    char user[INS_USER_NAME_MAX] = "";   /* 锁内快照当前使用者: 防与写侧(网页/设备)并发读到半截串 */
     if (strncmp(text, "{TODO}", 6) == 0)   /* 待办标记: 先存待办, 正文再去掉标记 */
     {
         TODO_Add(text + 6);
@@ -944,6 +959,10 @@ void INS_ShowIns(const char *text)
         INS_Show(text);
         return;
     }
+    ins_lock();
+    strncpy(user, ins_user, sizeof(user) - 1);
+    user[sizeof(user) - 1] = '\0';
+    ins_unlock();
     if (user[0])
     {
         snprintf(buf, sizeof(buf), "致%s:%s", user, text);
@@ -969,16 +988,17 @@ void INS_ShowByIndex(uint8_t idx)
     ins_unlock();                    /* ShowIns 已同步把文本复制进破译缓冲, 解锁安全 */
 }
 
-/* 特殊代行者「浮士德/里恩」的专属指令池; 其他使用者返回 NULL(只走默认库) */
-static const char *const *ins_user_pool(uint8_t *count)
+/* 特殊代行者「浮士德/里恩」的专属指令池; 其他使用者返回 NULL(只走默认库).
+ * user 由调用方用 INS_UserName() 快照后传入, 不在函数内再碰全局 ins_user. */
+static const char *const *ins_user_pool(const char *user, uint8_t *count)
 {
     *count = 0;
-    if (strcmp(ins_user, "浮士德") == 0)
+    if (strcmp(user, "浮士德") == 0)
     {
         *count = INS_USER_FAUST_N;
         return ins_user_faust;
     }
-    if (strcmp(ins_user, "里恩") == 0)
+    if (strcmp(user, "里恩") == 0)
     {
         *count = INS_USER_RIEN_N;
         return ins_user_rien;
@@ -989,7 +1009,8 @@ static const char *const *ins_user_pool(uint8_t *count)
 void INS_ShowRandom(void)
 {
     uint8_t uc = 0;
-    const char *const *upool = ins_user_pool(&uc);
+    const char *user_now = INS_UserName();   /* 先快照, 判定/抽取使用同一份使用者名 */
+    const char *const *upool = ins_user_pool(user_now, &uc);
     if (upool && uc > 0)                          /* 浮士德/里恩特殊: 有且仅有专属指令 */
     {
         INS_ShowIns(upool[esp_random() % uc]);

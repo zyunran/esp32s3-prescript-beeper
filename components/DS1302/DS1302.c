@@ -165,20 +165,20 @@ void DS1302_Write(const struct tm *t)
     rtc_tx_byte(0x00);             /* WP=0 允许写 */
     rtc_end();
 
-    /* 星期由日期归一化: mktime 按 tm_year/mon/mday 重算 tm_wday(结果必为 0..6),
-     * 避免调用方给的 tm_wday 未填(-1)/非法写坏 DS1302 星期寄存器 */
+    /* 用 mktime 归一化整个 struct tm: 既重算 tm_wday(), 也把时/分/秒/日/月/年
+     * 归一为合法范围(未填/越界/夏令时都由 mktime 处理),
+     * 防止调用方只传 wday 却没归一其它字段时写坏 DS1302 寄存器. */
     struct tm tn = *t;
     tn.tm_isdst = -1;
     mktime(&tn);
-    (void)tn.tm_wday;   /* 已由 mktime 归一, 直接使用下方 tn.tm_wday */
 
-    buf[0] = (uint8_t)(rtc_u2bcd((uint8_t)t->tm_sec) & 0x7F);          /* 清 CH 起振 */
-    buf[1] = rtc_u2bcd((uint8_t)t->tm_min);
-    buf[2] = rtc_u2bcd((uint8_t)t->tm_hour);
-    buf[3] = rtc_u2bcd((uint8_t)t->tm_mday);
-    buf[4] = rtc_u2bcd((uint8_t)(t->tm_mon + 1));
-    buf[5] = rtc_u2bcd((uint8_t)(tn.tm_wday + 1));                      /* tm_wday 0=周日..6=周六 -> DS1302 星期 1=周日..7=周六 */
-    buf[6] = rtc_u2bcd((uint8_t)(t->tm_year % 100));
+    buf[0] = (uint8_t)(rtc_u2bcd((uint8_t)tn.tm_sec) & 0x7F);          /* 清 CH 起振 */
+    buf[1] = rtc_u2bcd((uint8_t)tn.tm_min);
+    buf[2] = rtc_u2bcd((uint8_t)tn.tm_hour);
+    buf[3] = rtc_u2bcd((uint8_t)tn.tm_mday);
+    buf[4] = rtc_u2bcd((uint8_t)(tn.tm_mon + 1));
+    buf[5] = rtc_u2bcd((uint8_t)(tn.tm_wday + 1));                     /* tm_wday 0=周日..6=周六 -> DS1302 星期 1=周日..7=周六 */
+    buf[6] = rtc_u2bcd((uint8_t)(tn.tm_year % 100));
     buf[7] = 0x00;                /* WP 保持关闭, 下次直接可写 */
 
     rtc_begin();

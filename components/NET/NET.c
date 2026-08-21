@@ -72,8 +72,8 @@ static volatile uint8_t net_dns_active = 0;  /* 1=DNS 任务运行; 置 0 后任
 /* ================= 天气状态 ================= */
 typedef struct {
     char date[8];       /* "MM-DD" */
-    char text_day[12];  /* "晴"/"多云"/"雷阵雨"(3字=9B+NUL, 8B会截断残缺) */
-    char text_night[12];/* "晚间天气现象" */
+    char text_day[22];  /* 天气现象: 心知常见"雷阵雨伴有冰雹"7字=21B+NUL; 12B 会把"小雨转多云"截成"小雨转多" */
+    char text_night[22];/* 晚间天气现象(同容量, 缺失时回退白天) */
     char high[4];       /* "36" */
     char low[4];        /* "24" */
     char humidity[4];   /* "75" */
@@ -211,6 +211,10 @@ static void net_weather_parse(const char *json)
     {
         net_weather_ok = 1;
         net_weather_at = time(NULL);   /* 记拉取时刻(旧数据显示"更新于…"用) */
+    }
+    else
+    {
+        net_weather_ok = 0;   /* HTTP 成功但无有效槽(空响应/字段缺失): 撤掉上次 ok, 防主屏显示 " /" 垃圾天气 */
     }
     portEXIT_CRITICAL(&net_mux);
     if (filled > 0)
@@ -881,62 +885,94 @@ void NET_TimeAdopt(void)
     net_time_ok = 1;
 }
 
+uint8_t NET_IpStrCopy(char *buf, size_t n)
+{
+    esp_netif_ip_info_t ip;
+    esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!buf || n == 0) return 0;
+    buf[0] = '\0';
+    if (nif && esp_netif_get_ip_info(nif, &ip) == ESP_OK)
+    {
+        snprintf(buf, n, IPSTR, IP2STR(&ip.ip));
+    }
+    return 1;
+}
+
+/* 兼容只读接口: 仍返回静态缓冲; 新代码请优先用 *_Copy 版本避免跨任务共享. */
 const char *NET_IpStr(void)
 {
     static char buf[16];
-    esp_netif_ip_info_t ip;
-    esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (nif && esp_netif_get_ip_info(nif, &ip) == ESP_OK)
+    NET_IpStrCopy(buf, sizeof(buf));
+    return buf;
+}
+
+uint8_t NET_DateStrCopy(char *buf, size_t n)
+{
+    time_t now;
+    struct tm t;
+    if (!buf || n == 0) return 0;
+    if (!net_time_ok)
     {
-        snprintf(buf, sizeof(buf), IPSTR, IP2STR(&ip.ip));
-        return buf;
+        snprintf(buf, n, "--");
+        return 1;
     }
-    return "";
+    time(&now);
+    localtime_r(&now, &t);
+    snprintf(buf, n, "%02d-%02d", t.tm_mon + 1, t.tm_mday);
+    return 1;
 }
 
 const char *NET_DateStr(void)
 {
     static char buf[8];
+    NET_DateStrCopy(buf, sizeof(buf));
+    return buf;
+}
+
+uint8_t NET_TimeStrCopy(char *buf, size_t n)
+{
     time_t now;
     struct tm t;
+    if (!buf || n == 0) return 0;
     if (!net_time_ok)
     {
-        return "--";
+        snprintf(buf, n, "--:--:--");
+        return 1;
     }
     time(&now);
     localtime_r(&now, &t);
-    snprintf(buf, sizeof(buf), "%02d-%02d", t.tm_mon + 1, t.tm_mday);
-    return buf;
+    snprintf(buf, n, "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+    return 1;
 }
 
 const char *NET_TimeStr(void)
 {
     static char buf[12];
+    NET_TimeStrCopy(buf, sizeof(buf));
+    return buf;
+}
+
+uint8_t NET_WeekStrCopy(char *buf, size_t n)
+{
+    static const char *const names[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
     time_t now;
     struct tm t;
+    if (!buf || n == 0) return 0;
     if (!net_time_ok)
     {
-        return "--:--:--";
+        snprintf(buf, n, "--");
+        return 1;
     }
     time(&now);
     localtime_r(&now, &t);
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
-    return buf;
+    snprintf(buf, n, "%s", names[t.tm_wday]);
+    return 1;
 }
 
 const char *NET_WeekStr(void)
 {
-    static const char *const names[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
     static char buf[8];
-    time_t now;
-    struct tm t;
-    if (!net_time_ok)
-    {
-        return "--";
-    }
-    time(&now);
-    localtime_r(&now, &t);
-    snprintf(buf, sizeof(buf), "%s", names[t.tm_wday]);
+    NET_WeekStrCopy(buf, sizeof(buf));
     return buf;
 }
 
@@ -948,15 +984,14 @@ static uint8_t net_weather_valid_now(void)
            (uint32_t)(time(NULL) - net_weather_at) <= NET_WEATHER_VALID_SEC;
 }
 
-const char *NET_WeatherStr(void)
+uint8_t NET_WeatherStrCopy(char *buf, size_t n)
 {
-    static char buf[32];
     struct tm t;
     time_t now;
     const char *txt;
-    if (!net_weather_valid_now())
+    if (!buf || n == 0 || !net_weather_valid_now())
     {
-        return NULL;
+        return 0;
     }
     /* 按当前时段自动选白天/晚上天气(6:00~17:59 白天, 其余晚上) */
     time(&now);
@@ -964,11 +999,26 @@ const char *NET_WeatherStr(void)
     /* 主界面天气区仅 ~106px, 湿度放不下(3字天气词+温度已占满), 故不显示湿度;
      * 湿度在"联网->查看天气"详情页可见(NET_WeatherDayStr). */
     portENTER_CRITICAL(&net_mux);   /* 与天气任务的清空/填充互斥: 防读到全空/半新旧槽 */
+    if (net_weather_n < 1)   /* 锁内复核有有效槽: 防 ok 残留(解析失败撤标)与"跑赢清空"读到空槽输出 " /" */
+    {
+        portEXIT_CRITICAL(&net_mux);
+        return 0;
+    }
     txt = (t.tm_hour >= NET_DAY_START_HOUR && t.tm_hour < NET_DAY_END_HOUR)
           ? net_w[0].text_day : net_w[0].text_night;
-    snprintf(buf, sizeof(buf), "%s %s/%s",
+    snprintf(buf, n, "%s %s/%s",
              txt, net_w[0].high, net_w[0].low);
     portEXIT_CRITICAL(&net_mux);
+    return 1;   /* 已写入 buf: "雷阵雨 36/24" */
+}
+
+const char *NET_WeatherStr(void)
+{
+    static char buf[32];
+    if (!NET_WeatherStrCopy(buf, sizeof(buf)))
+    {
+        return NULL;
+    }
     return buf;   /* "雷阵雨 36/24" */
 }
 
@@ -998,7 +1048,7 @@ const char *NET_WeatherUpdatedStr(void)
 
 const char *NET_WeatherDayStr(uint8_t idx)
 {
-    static char buf[NET_WEATHER_DAYS][32];   /* 各 idx 独立缓冲, 避免互相覆盖 */
+    static char buf[NET_WEATHER_DAYS][40];   /* 各 idx 独立缓冲, 避免互相覆盖; 40B 容 7 字天气词(21B)+温度+湿度 */
     if (!net_weather_valid_now() || idx >= net_weather_n)
     {
         return NULL;
@@ -1015,7 +1065,7 @@ const char *NET_WeatherDayStr(uint8_t idx)
 /* 彩蛋(纺织时间): 天气词在3日间随机 + 高低温在真实区间随机 + 湿度30~95%随机(每次调用随机) */
 const char *NET_WeatherMadStr(void)
 {
-    static char buf[32];
+    static char buf[40];   /* 7 字天气词(21B)+随机温度+湿度 */
     uint8_t idx;
     int hi, lo, rhi, rlo, hum;
     if (!net_weather_valid_now()) return NULL;

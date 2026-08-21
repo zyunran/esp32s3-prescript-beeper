@@ -14,6 +14,8 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -41,6 +43,12 @@ typedef struct {
     uint32_t lastday;  /* 上次触发日(epoch 天数, 每日去重; 0=重设后未触发) */
 } alm_slot_t;
 static alm_slot_t alm[ALM_MAX];
+
+/* 跨任务互斥: 网页 httpd 的 ALM_GetSlot/SetSlot 逐字段读写 vs ui_task 每秒 ALM_Check 判触发,
+ * 无锁时撕裂读可致一次性闹钟错响/漏响/该关没关, 双侧并发 alm_save 还会落盘撕裂槽. */
+static SemaphoreHandle_t alm_mux = NULL;
+static void alm_lock(void)   { if (alm_mux) xSemaphoreTakeRecursive(alm_mux, portMAX_DELAY); }
+static void alm_unlock(void) { if (alm_mux) xSemaphoreGiveRecursive(alm_mux); }
 
 /* ================= 重复模式(设定屏滚轮): 每天/工作日(一~五)/周末/一次性 ================= */
 #define ALM_MODE_N  4
@@ -111,12 +119,14 @@ static const char *TAG = "ALM";
 static void alm_save(void)
 {
     nvs_handle_t h;
+    alm_lock();   /* 整表快照落盘与过路写串行(嵌套/递归调用安全) */
     if (nvs_open("alarm", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_blob(h, "alm", alm, sizeof(alm));
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "alarm nvs commit failed");
         nvs_close(h);
     }
+    alm_unlock();
 }
 
 /* ================= 绘制工具 ================= */
@@ -234,6 +244,7 @@ static void alm_setup_enter(void)
 static void alm_add_save(void)
 {
     uint8_t i;
+    alm_lock();   /* 找槽+写入原子, 防与网页 SetSlot 并发选重槽/撕裂 */
     for (i = 0; i < ALM_MAX; i++)
     {
         if (!alm[i].en) break;
@@ -246,6 +257,7 @@ static void alm_add_save(void)
     alm[i].once = alm_mode_once[al_mode];
     alm[i].lastday = 0;
     alm_save();
+    alm_unlock();
 }
 
 /* ================= 当前闹钟列表 =================
@@ -258,6 +270,7 @@ static uint8_t alm_list_n;              /* 已设闹钟数(不含"退出") */
 static void alm_list_refresh(void)
 {
     uint8_t i, n = 0;
+    alm_lock();   /* 建列表与 httpd SetSlot/Check 串行, 防读到半新旧槽 */
     for (i = 0; i < ALM_MAX; i++)
     {
         /* 已设(开启 或 曾设置过)的槽都显示并标 开/关; 从未设置的槽隐藏
@@ -274,6 +287,7 @@ static void alm_list_refresh(void)
     alm_list_n = n;
     snprintf(alm_list_items[n], sizeof(alm_list_items[n]), "退出");
     for (i = 0; i <= n; i++) alm_list_p[i] = alm_list_items[i];
+    alm_unlock();
 }
 
 static void alm_list_enter(void)
@@ -286,21 +300,25 @@ static void alm_list_enter(void)
 static void alm_list_key_ok(void)
 {
     uint8_t sel = UI_SubMenuCur();
-    if (sel >= alm_list_n)          /* 选中"退出" -> 回二级菜单 */
+    alm_lock();   /* 开关切换原子化(读-写-save), 防与 httpd SetSlot 并发 */
+    if (sel >= alm_list_n)
     {
-        alm_menu_enter();
+        alm_unlock();
+        alm_menu_enter();          /* 选中"退出" -> 回二级菜单 */
         return;
     }
     /* 开关切换: 关闭的闹钟仍在列表(标"关"), 可再次开启(不再"关了就从设备消失") */
     alm[alm_list_map[sel]].en = alm[alm_list_map[sel]].en ? 0 : 1;
     if (alm[alm_list_map[sel]].en) alm[alm_list_map[sel]].lastday = 0;   /* 重新开启: 重置当日去重 */
     alm_save();
+    alm_unlock();
     alm_list_enter();               /* 重建列表 */
 }
 
 /* 网页改闹钟(web_dirty): 若正停在"当前闹钟"列表, 就地重建(内容随 alm[] 更新即时反映) */
 void ALM_WebChanged(void)
 {
+    /* 仅 ui_task 调用(web_dirty 分支), 不跨任务访问 alm[]: 列表重建的锁在 alm_list_refresh 内 */
     if (alm_busy && alm_ph == AL_LIST)
     {
         alm_list_enter();
@@ -310,9 +328,15 @@ void ALM_WebChanged(void)
 static void alm_list_key_long(void)   /* 长按OK 删除该闹钟 */
 {
     uint8_t sel = UI_SubMenuCur();
-    if (sel >= alm_list_n) return;
+    alm_lock();
+    if (sel >= alm_list_n)
+    {
+        alm_unlock();
+        return;
+    }
     memset(&alm[alm_list_map[sel]], 0, sizeof(alm[0]));
     alm_save();
+    alm_unlock();
     alm_list_enter();                /* 重建列表 */
 }
 
@@ -322,6 +346,7 @@ void ALM_Init(void)
     nvs_handle_t h;
     size_t sz = sizeof(alm);
     uint8_t i;
+    alm_mux = xSemaphoreCreateRecursiveMutex();   /* 先于任何任务创建(httpd/ui) */
     memset(alm, 0, sizeof(alm));
     if (nvs_open("alarm", NVS_READONLY, &h) == ESP_OK)
     {
@@ -344,17 +369,28 @@ uint8_t ALM_Max(void)
 
 void ALM_GetSlot(uint8_t i, uint8_t *en, uint8_t *hh, uint8_t *mm, uint8_t *days, uint8_t *once)
 {
-    if (i >= ALM_MAX) return;
+    alm_lock();   /* httpd 读槽与 ui_task 触发/改槽串行: 防撕裂读 */
+    if (i >= ALM_MAX)
+    {
+        alm_unlock();
+        return;
+    }
     *en = alm[i].en;
     *hh = alm[i].hh;
     *mm = alm[i].mm;
     *days = alm[i].days;
     *once = alm[i].once;
+    alm_unlock();
 }
 
 void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, uint8_t once)
 {
-    if (i >= ALM_MAX) return;
+    alm_lock();   /* httpd 写槽与 ui_task 触发/列表操作串行: 防撕裂写与同分钟重复触发判定 */
+    if (i >= ALM_MAX)
+    {
+        alm_unlock();
+        return;
+    }
     /* 防御性钳位: 非法输入不落库(网页已校验, 双保险防 99:99 之类坏数据) */
     if (hh > 23) hh = 23;
     if (mm > 59) mm = 59;
@@ -366,6 +402,7 @@ void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, ui
     if (alm[i].en == en && alm[i].hh == hh && alm[i].mm == mm &&
         alm[i].days == days && alm[i].once == once)
     {
+        alm_unlock();
         return;
     }
     alm[i].en = en;
@@ -374,7 +411,8 @@ void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, ui
     alm[i].days = days;
     alm[i].once = once;
     alm[i].lastday = 0;   /* 真变更才重置当日触发标记 */
-    alm_save();
+    alm_save();           /* 嵌套锁(递归); 落盘与"改动"同锁, 防交叉写 */
+    alm_unlock();
 }
 
 void ALM_Enter(void)
@@ -500,11 +538,12 @@ uint8_t ALM_Check(void)
     time_t now;
     struct tm t;
     uint32_t day;
-    uint8_t i;
+    uint8_t i, r = 0;
     if (!NET_TimeOk())
     {
         return 0;                 /* 未校时, 无时间概念 */
     }
+    alm_lock();   /* 判触发整槽读 + 改 lastday/en 原子, 防与网页 SetSlot 撕裂 */
     time(&now);
     localtime_r(&now, &t);
     day = alm_today();
@@ -516,10 +555,12 @@ uint8_t ALM_Check(void)
             alm[i].lastday = day; /* 标记当日已触发, 防止同分钟重复 */
             if (alm[i].once) alm[i].en = 0;   /* 一次性: 到时自动关闭 */
             alm_save();
-            return 1;
+            r = 1;
+            break;
         }
     }
-    return 0;
+    alm_unlock();
+    return r;
 }
 
 /* 闹钟到点: 乱码破译显示一条闹钟专属指令(自动加"致当前使用者") */

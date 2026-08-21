@@ -20,11 +20,14 @@ static i2s_chan_handle_t snd_tx;
 static SemaphoreHandle_t snd_sem;       /* 唤醒播放任务 */
 /* 以下播放状态由调用任务(ui_task: Play/PlayLoop/Stop/SetVolume)与 snd_task 跨任务共享:
  *  - volatile: 防编译器把代次/指针/音量缓存在寄存器导致无限循环或读到陈旧值(M3)
- *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次 */
+ *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次
+ *  - snd_pending: 1=有一次待消费的播放请求(give 后、代次捕获前 Stop 会把代次"吞"掉,
+ *    播放任务醒来后据此判定该次唤醒已被 Stop 作废, 直接回信号量重等, 防循环音停不掉) */
 static const int16_t * volatile snd_pcm;  /* 待播缓冲 */
 static volatile uint32_t snd_frames;
 static volatile uint8_t  snd_loop;        /* 1=循环播放直到 SOUND_Stop */
 static volatile uint16_t snd_gen;         /* 播放代次: Play/Stop 时递增, 任务据此即时切换/停止 */
+static volatile uint8_t  snd_pending;     /* 1=有待播请求(Play 置1; Stop 清0; 任务消费后清0) */
 static volatile uint8_t  snd_vol = 100;   /* 音量 0~100(默认满; WEB/设置任务可改, 播放任务缩放时读) */
 static int16_t snd_scratch[1024];       /* 音量缩放暂存(与写入块 2048B 对应) */
 
@@ -35,6 +38,11 @@ static void snd_task(void *arg)
     {
         xSemaphoreTake(snd_sem, portMAX_DELAY);
         uint16_t gen = snd_gen;
+        if (!snd_pending)
+        {
+            continue;   /* 该次唤醒已被 Stop 作废(Play 后被 Stop, give 与捕获之间): 回信号量重等 */
+        }
+        snd_pending = 0;   /* 消费本次请求; 此后播放中的停止由块间 gen 检查生效 */
         do
         {
             uint8_t *p = (uint8_t *)snd_pcm;
@@ -49,6 +57,7 @@ static void snd_task(void *arg)
                     if (i2s_channel_write(snd_tx, p + written, n, &w, portMAX_DELAY) != ESP_OK)
                     {
                         written = bytes;
+                        snd_gen++;   /* 写失败: 终止本段并让外层 do-while 退出, 回信号量等待(防 PlayLoop 自旋饿死 UI) */
                         break;
                     }
                 }
@@ -68,6 +77,7 @@ static void snd_task(void *arg)
                     if (i2s_channel_write(snd_tx, snd_scratch, n, &w, portMAX_DELAY) != ESP_OK)
                     {
                         written = bytes;
+                        snd_gen++;   /* 同满音量路径: 写失败即终止, 防自旋 */
                         break;
                     }
                 }
@@ -142,6 +152,7 @@ void SOUND_Play(const int16_t *pcm, uint32_t frames)   /* 一次性播放(当前
     snd_pcm = pcm;
     snd_frames = frames;
     snd_loop = 0;
+    snd_pending = 1;   /* 置请求标志后再 give: 任务醒来先查 pending, 防 Stop 夹在中间把本次播放作废 */
     xSemaphoreGive(snd_sem);
 }
 
@@ -155,11 +166,13 @@ void SOUND_PlayLoop(const int16_t *pcm, uint32_t frames)
     snd_pcm = pcm;
     snd_frames = frames;
     snd_loop = 1;
+    snd_pending = 1;
     xSemaphoreGive(snd_sem);
 }
 
 void SOUND_Stop(void)
 {
-    snd_gen++;      /* 代次+1: 播放任务立即中止当前缓冲 */
+    snd_pending = 0;    /* 作废未消费的播放请求: 任务即使刚被 give 唤醒也直接重等 */
+    snd_gen++;          /* 代次+1: 播放任务立即中止当前缓冲 */
 }
 

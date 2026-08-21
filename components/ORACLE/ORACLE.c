@@ -12,7 +12,7 @@
 static uint8_t  ora_armed;      /* 已排程 */
 static uint8_t  ora_n;          /* 排程条数(与设置对比) */
 static uint8_t  ora_win;        /* 排程时段(与设置对比) */
-static int      ora_day = -1;   /* 排程日期 */
+static int      ora_day = -1;   /* 排程日期键(跨月/跨年也需重新排程, 见 ora_date_key) */
 static uint16_t ora_times[9];   /* 各推送时刻(当日分钟) */
 static uint8_t  ora_idx;        /* 下一个待触发 */
 
@@ -42,13 +42,15 @@ static void ora_count_save(void)
     }
 }
 
-static int ora_mday(void)
+/* 日期键: 不能用 tm_mday 单独做键 —— 9/1 与 10/1 同为"1 号"时会被误判成同一天,
+ * 导致跨月后神谕不再重新排程. 这里用「年份 + 年内天序号」代表实际日期. */
+static int ora_date_key(void)
 {
     time_t now;
     struct tm t;
     time(&now);
     localtime_r(&now, &t);
-    return t.tm_mday;
+    return t.tm_year * 400 + t.tm_yday;
 }
 
 static uint16_t ora_min_of_day(void)
@@ -102,12 +104,12 @@ uint8_t ORACLE_Due(void)
     /* 跨日或设置变更 -> 重排程 */
     n = SET_OracleN();
     win = SET_OracleWin();
-    if (!ora_armed || n != ora_n || win != ora_win || ora_mday() != ora_day)
+    if (!ora_armed || n != ora_n || win != ora_win || ora_date_key() != ora_day)
     {
         ora_armed = 1;
         ora_n = (n > 9) ? 9 : n;   /* 与 ora_schedule 的数组容量一致: 防设置放开上限后越界读 */
         ora_win = win;
-        ora_day = ora_mday();
+        ora_day = ora_date_key();
         ora_schedule();
     }
     if (ora_idx >= ora_n)

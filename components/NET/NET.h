@@ -2,6 +2,7 @@
 #define __NET_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* NET 组件: WiFi STA 联网 + SNTP 校时(路径1 完全按需、离线优先)
  *  - NET_Init:     初始化 WiFi 基础, 但射频默认关闭(省电/零暴露面); 配网热点也需手动开
@@ -25,6 +26,12 @@ const char *NET_DateStr(void);       /* "MM-DD"(未同步 "--") */
 const char *NET_TimeStr(void);       /* "HH:MM:SS"(未同步 "--:--:--") */
 const char *NET_WeekStr(void);       /* "Mon".."Sun"(未同步 "--") */
 const char *NET_WeatherStr(void);    /* 今日天气 "晴 36/24"(按时段自动白天/晚上; 未就绪/超72h无校正 NULL) */
+/* 线程安全拷贝版: 结果写入调用方缓冲, 不在跨任务共享静态缓冲, 供 UI/HTTP 并发读取. */
+uint8_t NET_IpStrCopy(char *buf, size_t n);          /* 必成功(无 IP 时为空串), 1=已写入 */
+uint8_t NET_DateStrCopy(char *buf, size_t n);        /* 未同步时写入 "--", 始终返回 1 */
+uint8_t NET_TimeStrCopy(char *buf, size_t n);        /* 未同步时写入 "--:--:--", 始终返回 1 */
+uint8_t NET_WeekStrCopy(char *buf, size_t n);        /* 未同步时写入 "--", 始终返回 1 */
+uint8_t NET_WeatherStrCopy(char *buf, size_t n);     /* 1=有天气; 0=无/超期(不写入) */
 uint8_t     NET_WeatherCount(void);  /* 已拉取天气天数(0=未就绪 或 超72h无校正) */
 const char *NET_WeatherDayStr(uint8_t idx); /* 第 idx 天 "MM-DD 晴 36/24 75%"(越界/未就绪/超期 NULL) */
 const char *NET_WeatherMadStr(void);    /* 彩蛋(纺织时间): 随机日天气词+真实区间随机温度+随机湿度 */

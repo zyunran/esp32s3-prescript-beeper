@@ -408,7 +408,11 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddNumberToObject(root, "cursor", UI_GetCursorStyle());
         cJSON *status = cJSON_CreateObject();
         cJSON_AddNumberToObject(status, "wifi", NET_WifiOk() ? 1 : 0);
-        cJSON_AddStringToObject(status, "ip", NET_IpStr());
+        {
+            char ip[16];
+            NET_IpStrCopy(ip, sizeof(ip));   /* 拷贝版: 避免 /api/cfg 与 UI 刷新共用静态缓冲 */
+            cJSON_AddStringToObject(status, "ip", ip);
+        }
         cJSON_AddItemToObject(root, "status", status);
         cJSON_AddStringToObject(root, "ap_ssid", NET_GetApSsid());
         cJSON_AddStringToObject(root, "ap_pass", NET_GetApPass());
@@ -968,16 +972,20 @@ static esp_err_t web_api_status(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     uint8_t pct = BAT_GetPct();
+    char ip[16], date[8], time[12], wx[32];
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "battery", (pct <= 100) ? pct : -1);
     cJSON_AddNumberToObject(root, "heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "boot", SET_BootCount());
-    cJSON_AddStringToObject(root, "ip", NET_IpStr());
+    NET_IpStrCopy(ip, sizeof(ip));
+    cJSON_AddStringToObject(root, "ip", ip);
     cJSON_AddStringToObject(root, "ssid", NET_GetSsid());
     cJSON_AddNumberToObject(root, "wifi", NET_WifiOk() ? 1 : 0);
-    cJSON_AddStringToObject(root, "date", NET_DateStr());
-    cJSON_AddStringToObject(root, "time", NET_TimeStr());
-    cJSON_AddStringToObject(root, "weather", NET_WeatherStr() ? NET_WeatherStr() : "暂无");
+    NET_DateStrCopy(date, sizeof(date));
+    NET_TimeStrCopy(time, sizeof(time));
+    cJSON_AddStringToObject(root, "date", date);
+    cJSON_AddStringToObject(root, "time", time);
+    cJSON_AddStringToObject(root, "weather", NET_WeatherStrCopy(wx, sizeof(wx)) ? wx : "暂无");
     char *out = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, out ? out : "{}");
