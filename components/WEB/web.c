@@ -1284,5 +1284,6 @@ void WEB_Init(void)
             httpd_register_uri_handler(server, &p);
         }
     }
-    ESP_LOGI(TAG, "config page: AP=%s -> http://192.168.4.1/  or  http://<router-ip>/", NET_GetSsid()[0] ? "STA" : "配网");
+    ESP_LOGI(TAG, "config page: WiFi已保存=%s -> http://192.168.4.1/ 或 http://<router-ip>/",
+             NET_GetSsid()[0] ? "是(STA直连)" : "否(连热点配网)");
 }

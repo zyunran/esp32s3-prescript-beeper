@@ -444,8 +444,18 @@ static void on_event(uint8_t evt)
                         d = NET_WeatherDayStr(i);
                         if (!d) continue;
                         if (wp >= sizeof(wbuf) - 1) break;
-                        wp += (size_t)snprintf(&wbuf[wp], sizeof(wbuf) - wp, "%s%s",
-                                               (wp ? "\n" : ""), d);
+                        {
+                            /* 用"实际写入量"推进: snprintf 返回值是"应写长度", 被截断时直接拿来累加会让 wp 虚增(下轮写越界危险) */
+                            int r = snprintf(&wbuf[wp], sizeof(wbuf) - wp, "%s%s",
+                                             (wp ? "\n" : ""), d);
+                            if (r < 0) break;
+                            if ((size_t)r >= sizeof(wbuf) - wp)
+                            {
+                                wp = sizeof(wbuf) - 1;   /* 截断: 写指针归尾并收工 */
+                                break;
+                            }
+                            wp += (size_t)r;
+                        }
                     }
                     if (wp == 0)
                     {
@@ -845,26 +855,32 @@ static void ui_task(void *arg)
         if (scr_on)
         {
             /* 网页保存配置/待办, 或使用者名变化: 当前界面即时刷新
-             * (绘制统一在本任务做, 避免 httpd 任务与 UI 并发) */
-            if (WEB_ConfigDirty() || strcmp(INS_UserName(), ui_user_last) != 0)
+             * (绘制统一在本任务做, 避免 httpd 任务与 UI 并发;
+             *  INS_UserName 返回共享快照缓冲, 一次性拷到局部串, 防比较/记录/显示读到不同版本) */
             {
-                if (ui_state == ST_MAIN)
+                char user_now[INS_USER_NAME_MAX];
+                strncpy(user_now, INS_UserName(), sizeof(user_now) - 1);
+                user_now[sizeof(user_now) - 1] = '\0';
+                if (WEB_ConfigDirty() || strcmp(user_now, ui_user_last) != 0)
                 {
-                    WEB_ConfigDirtyClear();
-                    strncpy(ui_user_last, INS_UserName(), sizeof(ui_user_last) - 1);
-                    ui_user_last[sizeof(ui_user_last) - 1] = '\0';
-                    UI_SetUserTitle(INS_UserName());
-                    UI_RenderScreen();
-                }
-                else if (ui_state == ST_TODO)
-                {
-                    WEB_ConfigDirtyClear();
-                    TODO_Enter();   /* 网页改了待办: 刷新列表(光标重置) */
-                }
-                else if (ui_state == ST_ALARM)
-                {
-                    WEB_ConfigDirtyClear();
-                    ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
+                    if (ui_state == ST_MAIN)
+                    {
+                        WEB_ConfigDirtyClear();
+                        strncpy(ui_user_last, user_now, sizeof(ui_user_last) - 1);
+                        ui_user_last[sizeof(ui_user_last) - 1] = '\0';
+                        UI_SetUserTitle(user_now);
+                        UI_RenderScreen();
+                    }
+                    else if (ui_state == ST_TODO)
+                    {
+                        WEB_ConfigDirtyClear();
+                        TODO_Enter();   /* 网页改了待办: 刷新列表(光标重置) */
+                    }
+                    else if (ui_state == ST_ALARM)
+                    {
+                        WEB_ConfigDirtyClear();
+                        ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
+                    }
                 }
             }
             if (ui_state == ST_MAIN)

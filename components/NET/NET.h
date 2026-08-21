@@ -21,6 +21,7 @@ uint8_t NET_WifiOk(void);            /* 1=WiFi 已连上 */
 uint8_t NET_SessionOn(void);         /* 1=联网会话进行中(射频开): 供 联网开关 显示 开/关 */
 uint8_t NET_TimeOk(void);            /* 1=时间已同步 */
 void NET_TimeAdopt(void);            /* 采用外部有效时间(DS1302), 免联网即时显示 */
+/* deprecated: 返回跨任务共享静态缓冲, 并发读会被互相覆写 —— 新代码请用下方 *_Copy 版 */
 const char *NET_IpStr(void);         /* 已连 WiFi 的 IP("192.168.1.5"; 未连="" ) */
 const char *NET_DateStr(void);       /* "MM-DD"(未同步 "--") */
 const char *NET_TimeStr(void);       /* "HH:MM:SS"(未同步 "--:--:--") */
@@ -45,7 +46,7 @@ const char *NET_GetCity(void);             /* 天气城市(拼音) */
 const char *NET_GetKey(void);              /* 心知天气 API 私钥 */
 const char *NET_GetApSsid(void);           /* 配网热点名 */
 const char *NET_GetApPass(void);           /* 配网热点密码 */
-void NET_SetWifi(const char *ssid, const char *pass);   /* 保存WiFi并切到AP+STA连网 */
+void NET_SetWifi(const char *ssid, const char *pass);   /* 保存 STA WiFi 凭据(NVS)并延迟重连; 不切 Wi-Fi 模式(热点由 联网->开启配网 单独开) */
 void NET_ClearWifi(void);                               /* 清除已存 WiFi, 回纯 AP 配网模式(WEB"清除"按钮) */
 void NET_SetCity(const char *city);                     /* 立即置为待重拉 */
 void NET_SetKey(const char *key);                       /* 改天气私钥, 立即置为待重拉 */

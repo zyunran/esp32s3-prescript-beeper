@@ -437,7 +437,9 @@ static void coin_score_load(void)
     }
 }
 
-/* 锁内只拍快照, NVS 落盘在锁外做: 防 httpd 侧(图鉴读取)跨任务阻塞在闪存写入上 */
+/* 锁内只拍快照, NVS 落盘在锁外做: 防 httpd 侧(图鉴读取)跨任务阻塞在闪存写入上.
+ * 注意: 调用方若仍持有 gacha_lock(递归互斥), 本函数的"锁外落盘"不会生效 ——
+ * 抽卡/拼点路径已全部把落盘安排在 gacha_unlock() 之后, 勿再挪回锁内. */
 static void coin_score_save(void)
 {
     int32_t snap[5];
@@ -524,8 +526,8 @@ static void gacha_start_ten(void)
             gc_pidx[i] = -1;
         }
     }
-    if (owned_chg) coin_owned_save();
     gacha_unlock();
+    if (owned_chg) coin_owned_save();   /* NVS 落盘在锁外: httpd 图鉴读取不被闪存提交阻塞 */
     gc_box_y  = (LCD_HEIGHT - GACHA_BOX_SIZE) / 2;
     gc_bx0    = (LCD_WIDTH - GACHA_TEN_N * GACHA_BOX_PITCH) / 2;
     gc_lx     = -2;                     /* 屏外左侧进入 */
@@ -556,8 +558,8 @@ static void coin_score_battle(void)
     if (coin_dmg_last > coin_score_max) coin_score_max = coin_dmg_last;
     coin_score_streak++;                 /* 连胜+1 */
     if (coin_score_streak > coin_score_streak_max) coin_score_streak_max = coin_score_streak;
-    coin_score_save();
     gacha_unlock();
+    coin_score_save();   /* NVS 落盘在锁外(内部锁内快照): 防 httpd 图鉴读取被闪存提交阻塞 */
 }
 
 /* 局部水平居中画文字(中心线 cx) */
@@ -638,11 +640,24 @@ static void cbm_resolve(void)
     else { cbm_last_res = 3; }                           /* 平局重掷 */
     if (cbm_me_c == 0)
     {
+        uint8_t had = (coin_score_streak != 0);
         cbm_done = 2;
-        if (coin_score_streak != 0) { coin_score_streak = 0; coin_score_save(); }  /* 输: 连胜清零 */
-        gc_coin_sub = COIN_RES; gacha_coin_render(); gacha_unlock(); return;
+        if (had) coin_score_streak = 0;   /* 输: 连胜清零 */
+        gc_coin_sub = COIN_RES;
+        gacha_unlock();
+        if (had) coin_score_save();       /* NVS 落盘在锁外(内部锁内快照): 防 httpd 图鉴读取被闪存提交阻塞 */
+        gacha_coin_render();
+        return;
     }
-    if (cbm_op_c == 0) { cbm_done = 1; gc_coin_sub = COIN_RES; coin_score_battle(); gacha_coin_render(); gacha_unlock(); return; }
+    if (cbm_op_c == 0)
+    {
+        cbm_done = 1;
+        gc_coin_sub = COIN_RES;
+        gacha_unlock();
+        coin_score_battle();              /* 加分+落盘: 自身加锁, NVS 落盘锁外 */
+        gacha_coin_render();
+        return;
+    }
     if (cbm_round >= 99) { cbm_done = 3; gc_coin_sub = COIN_RES; gacha_coin_render(); gacha_unlock(); return; }
     cbm_roll();                          /* 下一轮 */
     gacha_unlock();
@@ -1148,6 +1163,7 @@ static const char *gacha_menu_items[GACHA_MENU_CNT] = { "十连", "拼点", "单
 /* 积分抽: 10当前积分直接抽一张★3, 扣当前积分并标记已抽; 走普通出金的语音打字机 */
 static void gacha_points_pull(void)
 {
+    uint8_t owned_new = 0;   /* 本次新抽中人格(锁外落盘) */
     gacha_lock();
     coin_score_ensure();
     if (coin_score_cur < GACHA_POINTS_PULL)
@@ -1158,16 +1174,17 @@ static void gacha_points_pull(void)
         return;
     }
     coin_score_cur -= GACHA_POINTS_PULL;
-    coin_score_save();
     gc_res[0] = gacha_pick_gold();                  /* 统一人格表抽★3 */
     gc_pidx[0] = (int16_t)gc_last_gold;
     gc_rar[0] = GACHA_RAR_GOLD;
     if (!coin_owned[gc_last_gold])
     {
         coin_owned[gc_last_gold] = 1;
-        coin_owned_save();
+        owned_new = 1;
     }
     gacha_unlock();
+    coin_score_save();          /* NVS 落盘在锁外(内部锁内快照): 防 httpd 图鉴读取被闪存提交阻塞 */
+    if (owned_new) coin_owned_save();
     gc_single = 1;
     gc_v_gold_idx = 0;
     gc_phase = GC_VOICE;

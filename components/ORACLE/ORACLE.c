@@ -96,6 +96,7 @@ static void ora_schedule(void)
 uint8_t ORACLE_Due(void)
 {
     uint8_t n, win;
+    int dk;   /* 当前的日期键(求值一次: 判定与记录用同一份, 防恰好跨午夜时判定/赋值不一致) */
 
     if (!NET_TimeOk())
     {
@@ -104,12 +105,13 @@ uint8_t ORACLE_Due(void)
     /* 跨日或设置变更 -> 重排程 */
     n = SET_OracleN();
     win = SET_OracleWin();
-    if (!ora_armed || n != ora_n || win != ora_win || ora_date_key() != ora_day)
+    dk = ora_date_key();
+    if (!ora_armed || n != ora_n || win != ora_win || dk != ora_day)
     {
         ora_armed = 1;
         ora_n = (n > 9) ? 9 : n;   /* 与 ora_schedule 的数组容量一致: 防设置放开上限后越界读 */
         ora_win = win;
-        ora_day = ora_date_key();
+        ora_day = dk;
         ora_schedule();
     }
     if (ora_idx >= ora_n)

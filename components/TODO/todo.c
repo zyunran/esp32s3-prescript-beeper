@@ -219,6 +219,7 @@ static void todo_enter(void)
     }
     strcpy(todo_items[n], "退出");
     todo_item_p[n] = todo_items[n];
+    UI_SubMenuSetCenterDx(0);   /* 归零残留偏移(GACHA 图鉴/罪人选择设过 24~32px 且不复位): 防列表整体右移 */
     UI_SubMenuInitItemsC(todo_item_p, n + 1, 2);
     todo_busy = 1;
     todo_unlock();

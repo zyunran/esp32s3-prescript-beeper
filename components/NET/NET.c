@@ -86,8 +86,8 @@ typedef struct {
 static net_weather_t net_w[NET_WEATHER_DAYS];
 static uint8_t net_weather_ok = 0;        /* 天气已拉取成功 */
 static uint8_t net_weather_n = 0;         /* 实际解析天数(API 可能只回 1~2 天) */
-static uint8_t net_weather_fetched = 0;   /* 本次会话已拉取(断连后重置再拉) */
-static uint8_t net_weather_busy = 0;      /* 天气任务存活(防止断连重连时堆积) */
+static volatile uint8_t net_weather_fetched = 0;  /* 本次会话已拉取(断连后重置再拉); volatile: 事件任务与天气任务跨核读写 */
+static volatile uint8_t net_weather_busy = 0;     /* 天气任务存活(防止断连重连时堆积); volatile: 同上 */
 static time_t  net_weather_at = 0;        /* 上次拉取成功时刻(epoch; 详情页旧数据时间戳) */
 static char net_weather_raw[4096];        /* HTTP 响应缓冲(3日+夜间/湿度 JSON 可能逼近 2KB, 放大防截断) */
 static uint16_t net_weather_raw_len = 0;
@@ -608,7 +608,7 @@ void NET_Init(void)
     {
         size_t sl = strnlen(net_ssid, sizeof(wcfg.sta.ssid) - 1);
         memcpy(wcfg.sta.ssid, net_ssid, sl);
-        wcfg.sta.ssid[sl] = '\0';                     /* 满长也确保 NUL, 防 WiFi 库 strlen 越界 */
+        wcfg.sta.ssid[sl] = '\0';   /* 满长也确保 NUL, 防 WiFi 库 strlen 越界; wifi_sta_config_t 无 ssid_len 字段(NUL 结尾协议), 32B SSID 是 ESP-IDF 接口固有限制 */
         size_t pl = strnlen(net_pass, sizeof(wcfg.sta.password) - 1);
         memcpy(wcfg.sta.password, net_pass, pl);
         wcfg.sta.password[pl] = '\0';
@@ -704,7 +704,7 @@ void NET_SetWifi(const char *ssid, const char *pass)
     {
         size_t sl = strnlen(net_ssid, sizeof(wcfg.sta.ssid) - 1);
         memcpy(wcfg.sta.ssid, net_ssid, sl);
-        wcfg.sta.ssid[sl] = '\0';                     /* 满长也确保 NUL, 防 WiFi 库 strlen 越界 */
+        wcfg.sta.ssid[sl] = '\0';   /* 满长也确保 NUL, 防 WiFi 库 strlen 越界; wifi_sta_config_t 无 ssid_len 字段(NUL 结尾协议), 32B SSID 是 ESP-IDF 接口固有限制 */
         size_t pl = strnlen(net_pass, sizeof(wcfg.sta.password) - 1);
         memcpy(wcfg.sta.password, net_pass, pl);
         wcfg.sta.password[pl] = '\0';

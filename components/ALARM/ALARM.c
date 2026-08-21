@@ -293,6 +293,7 @@ static void alm_list_refresh(void)
 static void alm_list_enter(void)
 {
     alm_list_refresh();
+    UI_SubMenuSetCenterDx(0);   /* 归零残留偏移(GACHA 图鉴/罪人选择设过 24~32px 且不复位): 防列表整体右移 */
     UI_SubMenuInitItemsC(alm_list_p, alm_list_n + 1, 2);   /* 只列已设闹钟 + 退出 */
     alm_ph = AL_LIST;
 }
