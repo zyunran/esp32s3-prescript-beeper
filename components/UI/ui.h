@@ -65,9 +65,10 @@ typedef enum {
 } ui_menu_idx_t;
 
 typedef enum {
-    UI_NET_CONNECT = 0,   /* 连接网络 */
+    UI_NET_CONNECT = 0,   /* 联网开关(开启/关闭联网会话) */
     UI_NET_AP,            /* 开启配网 */
     UI_NET_WEATHER,       /* 查看天气 */
+    UI_NET_IP,            /* 显示IP */
     UI_NET_EXIT,          /* 退出 */
 } ui_net_idx_t;
 
@@ -88,7 +89,7 @@ typedef enum {
     UI_FN_ASK,        /* 询问(答案之书: 回答/吃什么/喝什么/玩什么) */
     UI_FN_GACHA,      /* 抽卡十连(直接进入"十连/退出"菜单) */
     UI_FN_SUBMENU,    /* 通用子菜单: {title}01..NN + 退出 */
-    UI_FN_NET,        /* 联网(连接网络/开启配网/查看天气; 子菜单项在 ui.c cfg_net_items 配置) */
+    UI_FN_NET,        /* 联网(联网开关/开启配网/查看天气/显示IP; 子菜单项在 ui.c cfg_net_items 配置) */
     UI_FN_SETTING,    /* 设置(子菜单项由 SETTING.c settings_items_refresh 生成) */
     UI_FN_TTL,        /* TTL协议: 跨越时间(倒计时)/锚定时间(闹钟)/退出 */
     UI_FN_TODO,       /* 待办/指令日志: 待执行指令列表, 完成即 PASS */
