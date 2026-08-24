@@ -24,6 +24,8 @@
 #include "BATTERY.h"
 #include "ORACLE.h"
 #include "ANSWER.h"
+#include "LOOM.h"
+#include "POMODORO.h"
 #include "WEB.h"
 #include "MPU6050.h"
 #include "DS1302.h"
@@ -45,6 +47,8 @@
 #define EVT_OK       2
 #define EVT_DOWN     3
 #define EVT_LONG_OK  4    /* OK 长按(返回上一级) */
+#define EVT_FLIP_DOWN 5   /* MPU 扣屏(面朝下保持): 灭屏 */
+#define EVT_RAISE     6   /* MPU 抬腕/翻回: 亮屏 */
 
 /* 长按参数(改这里即可调整手感):
  *   LONG_PRESS_MS  = 判定"长按"的按住时长(超此即长按)
@@ -58,7 +62,7 @@
 #define NET_CONNECT_RESULT_MS  12000
 
 /* ================= 界面状态机 ================= */
-typedef enum { ST_MAIN, ST_SUB, ST_INS, ST_GACHA, ST_TIMER, ST_ALARM, ST_INFO, ST_TODO, ST_MPU, ST_ASK } ui_state_t;
+typedef enum { ST_MAIN, ST_SUB, ST_INS, ST_GACHA, ST_TIMER, ST_ALARM, ST_INFO, ST_TODO, ST_MPU, ST_ASK, ST_LOOM, ST_POMO } ui_state_t;
 
 static QueueHandle_t key_q;
 static TaskHandle_t input_task_h = NULL;   /* 按键轮询任务句柄(待机挂起/唤醒恢复, 省电) */
@@ -83,39 +87,44 @@ typedef struct {
 static ui_frame_t ui_stack[UI_STACK_MAX];
 static uint8_t ui_stack_n = 0;
 
-/* ================= 彩蛋「纺织时间」(made in heaven): 现实1秒=显示1小时 ================= */
-static uint8_t mih_on = 0;            /* 1=时间加速中 */
-static time_t mih_base = 0;           /* 开启时刻真实 epoch */
-static int64_t mih_ms = 0;            /* 开启时刻 esp_timer ms(int64: 防 >49.7 天 uptime 时 uint32 回绕) */
-static uint32_t mih_wx_last = 0;      /* 彩蛋天气刷新节流 ms */
-static uint32_t mih_draw_last = 0;    /* 彩蛋时间整屏重绘节流 ms(加速时秒变化远快于刷新率, 限流防总线/CPU 打满) */
-static uint8_t mih_confirm = 0;       /* 彩蛋确认乱码显示中(播完自动回主界面) */
-static uint32_t mih_hold_t = 0;       /* 确认定格计时 */
-static const char *const ui_week_name[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+/* ================= 织机彩蛋(components/LOOM) 胶水 =================
+ * 「纺织时间/纺织记忆」逻辑已独立到 LOOM 组件; 主菜单入口已移除,
+ * 改为主界面 Konami 手势解锁(摇:上上下下左右左右 / 键:下下上上+OK·LNG·OK·LNG, ST_MAIN 喂 LOOM_Konami).
+ * 此处仅保留: 确认动画(MADE IN HEAVEN)定格流程 与 加速时间的显示节流. */
+static uint8_t egg_confirm = 0;       /* 彩蛋确认乱码显示中(播完自动回主界面) */
+static uint32_t egg_hold_t = 0;       /* 确认定格计时 */
+static uint32_t egg_wx_last = 0;      /* 加速态天气随机刷新节流 ms */
+static uint32_t egg_draw_last = 0;    /* 加速态时钟整屏重绘节流 ms */
 
-static void mih_toggle(void)
+static uint32_t last_act;   /* 前置声明(定义见下方"待机"区) */
+static uint8_t  scr_on;     /* 暂定声明: 实际定义(=1)在下方待机区 */
+
+/* ================= 扣屏熄屏 / 抬腕亮屏 =================
+ * MPU 发 EVT_FLIP_DOWN/EVT_RAISE, 此处统一执行(LCD 单写者约定).
+ * flip_wait=扣屏后等待翻回: 期间抑制待机浅睡眠(否则 MPU 挂起无法检测抬腕)与神谕/每日签亮屏推送;
+ * 超 FLIP_WAIT_MAX_MS 仍扣着 -> 放行进真待机(省电, 按键可唤醒). */
+#define FLIP_WAIT_MAX_MS 60000u
+static uint8_t flip_wait = 0;
+static uint32_t flip_wait_since = 0;
+
+/* 在 on_event 最前统一拦截翻转事件(全局生效, 不进各界面状态机) */
+static uint8_t evt_flip_handle(uint8_t evt)
 {
-    mih_on = !mih_on;
-    if (mih_on)
+    if (evt == EVT_FLIP_DOWN)
     {
-        mih_base = time(NULL);
-        mih_ms = (int64_t)(esp_timer_get_time() / 1000);
-        mih_wx_last = (uint32_t)mih_ms;
-        mih_draw_last = (uint32_t)mih_ms;
+        if (scr_on) { lcd_off(); scr_on = 0; }
+        flip_wait = 1;
+        flip_wait_since = (uint32_t)(esp_timer_get_time() / 1000);
+        return 1;
     }
-}
-
-/* ================= 彩蛋「纺织记忆」: 全系统白框滤镜 =================
- * 织机子菜单按一下: 整台 BB机 所有 UI(文字/数字/图标/菜单, 任意界面)全部变成空心白框,
- * 每个字符串按内容哈希随机稳定保留 1 个真字作提示, 其余白框(同串位置不变不乱跳).
- * 系统仍可正常上下移动/确认操作(盲操). 唯一退出: 再次进入织机→纺织记忆. */
-static void egg_toggle(void)
-{
-    UI_BoxModeSet(UI_BoxModeGet() ? 0 : 1);   /* 切换白框滤镜 */
-    /* 状态同步到主界面(与渲染出的主菜单一致): 否则白框下看着主菜单、实际仍在织机子菜单, 按键会脱节 */
-    ui_stack_n = 0;
-    ui_state = ST_MAIN;
-    UI_RenderScreen();                        /* 立即全屏重绘(白框/恢复) */
+    if (evt == EVT_RAISE)
+    {
+        flip_wait = 0;
+        flip_wait_since = 0;
+        if (!scr_on) { lcd_on(); scr_on = 1; last_act = (uint32_t)(esp_timer_get_time() / 1000); }
+        return 1;
+    }
+    return 0;
 }
 
 /* 进入"使用者"子菜单并高亮当前使用者名称(实时反映, 如当前为但丁) */
@@ -332,9 +341,22 @@ static void input_task(void *arg)
 /* ================= 事件处理(按当前界面状态) ================= */
 static void on_event(uint8_t evt)
 {
+    if (evt_flip_handle(evt)) return;   /* 扣屏/抬腕全局事件 */
     switch (ui_state)
     {
         case ST_MAIN:
+        {
+            /* 织机隐藏入口: 摇 上上下下左右左右 / 键 下下上上+OK·LNG·OK·LNG.
+             * 前四步完全放行(照常滚动有反馈, 失败零副作用); 完成即进织机.
+             * 后四步的 确认/长按OK 被"拦截区"占用: 拦下不开子菜单, 否则序列中断(实测踩坑). */
+            uint8_t kres = (evt != EVT_NONE) ? LOOM_Konami(evt) : LOOM_KON_PASS;
+            if (kres == LOOM_KON_DONE)
+            {
+                ui_push(ST_LOOM);
+                LOOM_Enter();
+                break;
+            }
+            if (LOOM_KonamiArmed() && (evt == EVT_OK || evt == EVT_LONG_OK)) break;
             if (evt == EVT_UP)        UI_Scroll(1);
             else if (evt == EVT_DOWN) UI_Scroll(-1);
             else if (evt == EVT_OK)
@@ -358,7 +380,6 @@ static void on_event(uint8_t evt)
                     case UI_FN_SETTING:              /* 设置 -> 设置子菜单(项由组件生成) */
                     case UI_FN_NET:                  /* 联网 -> 自定义子菜单 */
                     case UI_FN_TTL:                  /* TTL协议 -> 跨越时间/锚定时间/退出 */
-                    case UI_FN_LOOM:                 /* 织机 -> 纺织时间/退出(彩蛋) */
                     case UI_FN_USER:                 /* 使用者 -> 名称列表, 高亮当前使用者 */
                     case UI_FN_SUBMENU:              /* 其余 -> 通用子菜单 {title}01..NN */
                         ui_enter_main_submenu(sel, 0);
@@ -372,6 +393,7 @@ static void on_event(uint8_t evt)
                 }
             }
             break;
+        }
 
         case ST_SUB:
             if (evt == EVT_UP)        UI_SubMenuScroll(1);
@@ -512,18 +534,11 @@ static void on_event(uint8_t evt)
                         ui_push(ST_ALARM);
                         ALM_Enter();
                     }
-                }
-                else if (cfg->fn == UI_FN_LOOM && sel == UI_LOOM_SPIN)   /* 织机-纺织时间: 彩蛋开关 */
-                {
-                    mih_toggle();
-                    ui_to_main();                    /* 彩蛋确认播完回主界面看时间加速 */
-                    INS_Show(mih_on ? "MADE IN\nHEAVEN" : "时间恢复");
-                    mih_confirm = 1;                 /* 乱码播完自动回主界面看时间加速 */
-                    ui_push(ST_INS);
-                }
-                else if (cfg->fn == UI_FN_LOOM && sel == UI_LOOM_MEMORY)  /* 织机-纺织记忆: 全系统白框滤镜开关(唯一退出=再按一次) */
-                {
-                    egg_toggle();
+                    else if (sel == UI_TTL_POMO)    /* 番茄钟 */
+                    {
+                        ui_push(ST_POMO);
+                        POM_Enter();
+                    }
                 }
                 else if (cfg->fn == UI_FN_USER && cfg->item_count > 0 && sel + 1 < cfg->item_count)  /* 使用者: 选名字(sel+1 防 item_count-1 在 0 时下溢) */
                 {
@@ -611,14 +626,42 @@ static void on_event(uint8_t evt)
             else GACHA_OnEvent(evt);                     /* 抽卡内部状态机分发 */
             break;
 
+        case ST_LOOM:                         /* 织机彩蛋: 子菜单导航, 动作码决定导航 */
+        {
+            uint8_t lr = LOOM_Key(evt == EVT_UP, evt == EVT_OK, evt == EVT_DOWN, evt == EVT_LONG_OK);
+            if (lr == LOOM_KEY_EXIT) { ui_pop(); }
+            else if (lr == LOOM_KEY_TIME)      /* 纺织时间切换: 回主界面并播确认动画 */
+            {
+                ui_to_main();
+                INS_Show(LOOM_TimeOn() ? "MADE IN\nHEAVEN" : "时间恢复");
+                egg_confirm = 1;
+                egg_hold_t = 0;
+                ui_push(ST_INS);
+            }
+            else if (lr == LOOM_KEY_MEMORY)    /* 白框滤镜已切换: 清栈回主界面立即反映 */
+            {
+                ui_to_main();
+            }
+            break;
+        }
+
+        case ST_POMO:                          /* 番茄钟: 同倒计时模式, 长按OK退出 */
+            if (evt == EVT_LONG_OK) { POM_Exit(); ui_pop(); }
+            else
+            {
+                pom_ret_t pr = POM_Key(evt == EVT_UP, evt == EVT_OK, evt == EVT_DOWN);
+                if (pr == POM_EXIT) ui_pop();
+            }
+            break;
+
         case ST_ASK:
             ANS_OnEvent(evt);                            /* 询问内部处理(含长按OK返回) */
             break;
 
         case ST_INS:
             INS_Exit();                  /* 破译中任意键返回 */
-            mih_confirm = 0;             /* 手动按键退出: 取消彩蛋确认自动回主界面 */
-            mih_hold_t = 0;
+            egg_confirm = 0;             /* 手动按键退出: 取消彩蛋确认自动回主界面 */
+            egg_hold_t = 0;
             ui_pop();
             break;
     }
@@ -707,10 +750,10 @@ static void ui_task(void *arg)
             {
                 if (strcasecmp(wcmd, "made in heaven") == 0)   /* 彩蛋指令: 切换时间加速 */
                 {
-                    mih_toggle();
+                    LOOM_TimeToggle();
                     ui_to_main();                /* 彩蛋确认播完自动回主界面看时间加速 */
-                    INS_Show(mih_on ? "MADE IN\nHEAVEN" : "时间恢复");
-                    mih_confirm = 1;
+                    INS_Show(LOOM_TimeOn() ? "MADE IN\nHEAVEN" : "时间恢复");
+                    egg_confirm = 1;
                     ui_push(ST_INS);
                 }
                 else
@@ -733,7 +776,7 @@ static void ui_task(void *arg)
         {
             oracle_last = now;
             /* 每日签: 开机/换日后, 时间有效且主界面空闲, 显示一次"今日指令" */
-            if (ui_state == ST_MAIN && NET_TimeOk())
+            if (ui_state == ST_MAIN && !flip_wait && NET_TimeOk())
             {
                 char dd[8];
                 NET_DateStrCopy(dd, sizeof(dd));   /* 拷贝版: 防止与网页状态页并发读到静态缓冲 */
@@ -794,7 +837,7 @@ static void ui_task(void *arg)
             if (ORACLE_Due())
             {
                 ORACLE_Delivered();
-                if (ui_state == ST_MAIN)
+                if (ui_state == ST_MAIN && !flip_wait)
                 {
                     INS_ShowRandom();
                     ui_push(ST_INS);
@@ -818,7 +861,12 @@ static void ui_task(void *arg)
         if (xQueueReceive(key_q, &evt, (scr_on ? 20u : 200u) / portTICK_PERIOD_MS))
         {
             last_act = now;
-            if (!scr_on)               /* 屏幕休眠: 第一键仅唤醒 */
+      /* TODO: 诊断日志, 定位Konami后删除 */
+            if (evt_flip_handle(evt))  /* 扣屏/抬腕: 全局处理, 且不受"第一键仅唤醒"拦截 */
+            {
+                /* 已在 evt_flip_handle 内完成亮灭屏与状态维护 */
+            }
+            else if (!scr_on)          /* 屏幕休眠: 第一键仅唤醒(按键本身不透传) */
             {
                 lcd_on();
                 scr_on = 1;
@@ -885,26 +933,20 @@ static void ui_task(void *arg)
             }
             if (ui_state == ST_MAIN)
             {
-                if (mih_on)
+                if (LOOM_TimeOn())
                 {
-                    /* 彩蛋「纺织时间」: 现实1秒=显示1小时(3600显示秒), 时每1实秒+1、分每~16.7实秒+1、
-                     * 秒每~0.28实秒+1、日期每~6.67实时滚1天 —— 时/分/秒/日同源于一个连续时间, 同步不脱节 */
-                    int64_t el_ms = (int64_t)(esp_timer_get_time() / 1000) - (int64_t)mih_ms;   /* int64: 防回绕大偏差 */
-                    time_t dt = mih_base + (time_t)((uint64_t)el_ms * 3600 / 1000);  /* 连续显示秒 */
-                    struct tm tmv;
-                    char d[8], t[12];
-                    localtime_r(&dt, &tmv);
-                    snprintf(d, sizeof(d), "%02u-%02u", (uint8_t)(tmv.tm_mon + 1), (uint8_t)tmv.tm_mday);
-                    snprintf(t, sizeof(t), "%02u:%02u:%02u", (uint8_t)tmv.tm_hour, (uint8_t)tmv.tm_min, (uint8_t)tmv.tm_sec);
-                    if (now - mih_draw_last >= 200)  /* 加速时显示秒变化远快于刷新率: 限流到 ~5次/秒整屏重绘 */
+                    /* 彩蛋「纺织时间」(LOOM 组件): 现实1秒=显示1小时, 显示节流 ~5次/秒防刷屏打满 */
+                    char d[8], t[12], w[8];
+                    LOOM_TimeGet(d, sizeof(d), t, sizeof(t), w, sizeof(w));
+                    if (now - egg_draw_last >= 200)
                     {
-                        mih_draw_last = now;
-                        UI_TimeSet(d, t, ui_week_name[tmv.tm_wday]);   /* 彩蛋: 星期也随加速时间走 */
+                        egg_draw_last = now;
+                        UI_TimeSet(d, t, w);
                     }
-                    if (now - mih_wx_last >= 1200)   /* 天气每1.2秒跳一次 */
+                    if (now - egg_wx_last >= 1200)   /* 天气每1.2秒跳一次(随机词+随机温湿) */
                     {
-                        mih_wx_last = now;
-                        UI_WeatherSet(NET_WeatherMadStr());   /* 天气词+温度+湿度全随机 */
+                        egg_wx_last = now;
+                        UI_WeatherSet(NET_WeatherMadStr());
                     }
                 }
                 else
@@ -948,21 +990,21 @@ static void ui_task(void *arg)
             {
                 INS_Tick();                        /* 破译动画推进(非阻塞; 系统信息/开启配网提示也走乱码) */
                 /* 彩蛋确认「MADE IN HEAVEN」: 破译完成后定格片刻, 自动回主界面看时间加速 */
-                if (mih_confirm && ui_state == ST_INS)
+                if (egg_confirm && ui_state == ST_INS)
                 {
                     if (INS_Finished())
                     {
-                        if (mih_hold_t == 0) mih_hold_t = now;
-                        else if (now - mih_hold_t >= 900)
+                        if (egg_hold_t == 0) egg_hold_t = now;
+                        else if (now - egg_hold_t >= 900)
                         {
-                            mih_confirm = 0;
-                            mih_hold_t = 0;
+                            egg_confirm = 0;
+                            egg_hold_t = 0;
                             INS_Exit();            /* 内部已 UI_RenderScreen 回主界面 */
                             ui_pop();
                             last_act = now;
                         }
                     }
-                    else mih_hold_t = 0;           /* 仍在破译, 重置定格计时 */
+                    else egg_hold_t = 0;           /* 仍在破译, 重置定格计时 */
                 }
             }
             else if (ui_state == ST_MPU)
@@ -980,7 +1022,9 @@ static void ui_task(void *arg)
         INS_BeepTick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
 
         /* 待机: 息屏后进浅睡眠(倒计时进行中不睡, 需精确走秒; 按键唤醒后有 400ms 冷却) */
-        if (scr_on == 0 && ui_state != ST_TIMER && now >= standby_reenter_at)
+        if (scr_on == 0 && ui_state != ST_TIMER && ui_state != ST_POMO &&
+            !(flip_wait && now - flip_wait_since < FLIP_WAIT_MAX_MS) &&    /* 扣屏等待抬腕: 不进浅睡眠(MPU须保持采样) */
+            now >= standby_reenter_at)
         {
             standby_enter();
         }
@@ -1056,6 +1100,8 @@ void app_main(void)
     ALM_Init();   /* 闹钟初始化(NVS 加载) */
     TODO_Init();  /* 待办初始化(NVS 加载) */
     ANS_Init();   /* 答案之书初始化(NVS 加载) */
+    LOOM_Init();  /* 织机彩蛋组件(Konami 解锁/纺织时间/纺织记忆) */
+    POM_Init();   /* 番茄钟组件 */
     BAT_Init();   /* 电量 ADC 初始化(GPIO1 分压) */
     MPU_Init();   /* MPU6050 六轴初始化(软件I2C, 无传感器则后台重试) */
     GACHA_Init(); /* 创建抽卡/图鉴跨任务互斥量(须在 WEB_Init 启动 httpd 之前, 避免绘图请求撞上 mux=NULL) */

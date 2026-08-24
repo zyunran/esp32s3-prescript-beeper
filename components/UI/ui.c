@@ -84,12 +84,8 @@ static const char *cfg_net_items[] = {
 static const char *cfg_ttl_items[] = {
     [UI_TTL_FUTURE] = "计时",
     [UI_TTL_PAST]   = "闹钟",
+    [UI_TTL_POMO]   = "番茄钟",   /* v1.03: 番茄钟(POMODORO 组件) */
     [UI_TTL_EXIT]   = "退出",
-};
-static const char *cfg_loom_items[] = {
-    [UI_LOOM_SPIN]   = "纺织时间",   /* 彩蛋: made in heaven 时间加速 */
-    [UI_LOOM_MEMORY] = "纺织记忆",   /* 彩蛋: 全系统白框滤镜(唯一退出=再按一次) */
-    [UI_LOOM_EXIT]   = "退出",
 };
 /* ================= 使用者列表(运行期可变) =================
  * 网页端可添加新使用者, NVS "ins2"/"ulist" 持久化(与指令库同模式);
@@ -203,7 +199,7 @@ ui_menu_cfg_t ui_menu_cfg[UI_MENU_COUNT] = {
     [UI_MENU_USER]    = { ui_user_title, UI_FN_USER, 0, NULL, 0 },   /* items/item_count 由 UI_UserInit 运行时填 */
     [UI_MENU_SETTING] = { "设置", UI_FN_SETTING,  0, NULL,              0 },
     [UI_MENU_NET]     = { "联网", UI_FN_NET,      0, cfg_net_items,     UI_NET_EXIT + 1 },
-    [UI_MENU_LOOM]    = { "织机", UI_FN_LOOM,     0, cfg_loom_items,    UI_LOOM_EXIT + 1 },
+    /* 「织机」彩蛋自 v1.03 移出主菜单: 主界面 Konami 手势 上上下下左右左右 解锁(components/LOOM) */
     [UI_MENU_TTL]     = { "TTL协议", UI_FN_TTL,   0, cfg_ttl_items,     UI_TTL_EXIT + 1 },
 };
 

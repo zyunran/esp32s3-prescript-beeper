@@ -61,7 +61,6 @@ typedef enum {
     UI_MENU_USER,         /* 使用者(运行期可变) */
     UI_MENU_SETTING,      /* 设置 */
     UI_MENU_NET,          /* 联网 */
-    UI_MENU_LOOM,         /* 织机 */
     UI_MENU_TTL,          /* TTL协议 */
     UI_MENU_COUNT,
 } ui_menu_idx_t;
@@ -77,14 +76,9 @@ typedef enum {
 typedef enum {
     UI_TTL_FUTURE = 0,    /* 跨越时间(倒计时) */
     UI_TTL_PAST,          /* 锚定时间(闹钟) */
+    UI_TTL_POMO,          /* 番茄钟(v1.03 新增) */
     UI_TTL_EXIT,          /* 退出 */
 } ui_ttl_idx_t;
-
-typedef enum {
-    UI_LOOM_SPIN = 0,     /* 纺织时间(彩蛋) */
-    UI_LOOM_MEMORY,       /* 纺织记忆(彩蛋: 全系统白框滤镜) */
-    UI_LOOM_EXIT,         /* 退出 */
-} ui_loom_idx_t;
 
 typedef enum {
     UI_FN_INS,        /* 随机指令破译(神谕) */
@@ -95,7 +89,6 @@ typedef enum {
     UI_FN_SETTING,    /* 设置(子菜单项由 SETTING.c settings_items_refresh 生成) */
     UI_FN_TTL,        /* TTL协议: 跨越时间(倒计时)/锚定时间(闹钟)/退出 */
     UI_FN_TODO,       /* 待办/指令日志: 待执行指令列表, 完成即 PASS */
-    UI_FN_LOOM,       /* 织机: 纺织时间(彩蛋 made in heaven 时间加速) */
     UI_FN_USER,       /* 使用者: 当前使用者名称选择 */
 } ui_fn_t;
 

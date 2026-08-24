@@ -291,11 +291,11 @@ float MPU_Yaw(void)    { return f_yaw; }
 
 /* ================= 摇动检测(PCB 版安装校准) =================
  * PCB 静态基准实测: 平躺 横0/俯+10/航0; 竖立 俯-60.
- * 动作实测摆幅:   左右摇 横滚 0→±30; 上下摇 俯仰 +10→+40(上摇) / +10→-30(下摇).
+ * 动作实测摆幅:   左右摇 横滚 0→±30; 上下摇 俯仰 +10→+40(下摇) / +10→-30(上摇).
  * 方向: 转腕型取三轴主导角速度判动作, 符号判方向(与旧板相反: 横滚=左右[已对调], 俯仰=上下);
  *       分轴阈值: 上下摇(俯仰)更灵敏, 左右摇(横滚/航向)收紧防误触;
  *       平移型由重力投影判向: vert = dyn·ĝ(动态分量沿真实竖直, 与安装无关).
- *   上摇 -> EVT_UP(上滑); 下摇 -> EVT_DOWN(下滑)
+ *   物理上摇(-30侧)发 EVT_DOWN / 下摇(+40侧)发 EVT_UP [事件码与物理方向反向]; 彩蛋序列已在LOOM按3,3,1,1起始适配「上上 下下」
  * 触发: ① 竖直加速度超 SHAKE_G(平移摇动);
  *       ② 角速度超分轴阈值 SHAKE_GYRO_UD/LR 且竖直分量够(转腕/甩动型) */
 #define SHAKE_G        0.8f                  /* 平移竖直加速度触发阈值 g(重力投影法与安装无关, 不随 PCB 改) */
@@ -303,7 +303,8 @@ float MPU_Yaw(void)    { return f_yaw; }
 #define SHAKE_COOLDOWN 300u                  /* 两次摇动最小间隔 ms */
 #define SHAKE_GYRO_LR  70.0f                 /* 左右摇(横滚/航向)阈值 °/s: 实测易误触, 调高收紧 */
 #define SHAKE_GYRO_UD  45.0f                 /* 上下摇(俯仰)阈值 °/s: 实测有时失效, 调低提灵敏度 */
-#define RETURN_GUARD_MS 500u                 /* 回摆防护窗 ms: 同轴反号再触发视为回弹丢弃 */
+#define RETURN_GUARD_MS 400u                 /* 回摆防护窗 ms: 同轴反号且更弱才判回弹(见下) */
+#define REBOUND_RATIO   0.75f                /* 反号触发强度达上次 75% 以上 = 有意反向甩, 放行(Konami 依赖此) */
 #define DOMINANCE       1.25f                /* 主导轴优势系数: 次轴达主导80%即混合动作, 不触发 */
 /* 归位锁: 触发后需设备静止片刻才允许再次触发, 防止后摇归位(反向回摆)误触发 */
 #define STILL_VERT     (0.25f * ACCEL_G)     /* 静止判定: 竖直加速度阈值 g */
@@ -313,6 +314,8 @@ float MPU_Yaw(void)    { return f_yaw; }
 #define EVT_OK         2
 #define EVT_DOWN       3
 #define EVT_LONG_OK    4
+#define EVT_FLIP_DOWN  5                     /* 扣屏(面朝下保持): main 灭屏 */
+#define EVT_RAISE      6                     /* 抬腕/翻回: main 亮屏 */
 
 static QueueHandle_t mpu_q = NULL;
 static TaskHandle_t  mpu_task_h = NULL;       /* 采样任务句柄 */
@@ -344,10 +347,64 @@ void MPU_Resume(void)
     mpu_last_retry = 0;
 }
 
+/* 重力低通状态(文件级): 摇动方向判别 与 扣屏/抬腕检测 共用 gz_f */
+static float gx_f, gy_f, gz_f;
+static uint8_t g_init = 0;
+
+/* ================= 扣屏熄屏 / 抬腕亮屏 =================
+ * PCB 平躺 grav_z≈+0.98g / 直立≈+0.5g / 面朝下≈-0.9g:
+ *   grav_z < -0.45g 持续 FLIP_HOLD_MS -> 发 EVT_FLIP_DOWN(main 灭屏);
+ *   grav_z > +0.20g 持续 RAISE_HOLD_MS -> 发 EVT_RAISE(main 亮屏).
+ * 只发事件不碰 LCD(LCD 单写者约定). 开关随「设置→摇动」(关摇动同时关翻转检测). */
+#define FLIP_DOWN_G    (-0.45f * ACCEL_G)
+#define FLIP_UP_G      (0.20f * ACCEL_G)
+#define FLIP_HOLD_MS   500u                  /* 面朝下需持续时长(加严: 排除甩动手势途中的姿态掠过) */
+#define RAISE_HOLD_MS  200u
+#define FLIP_EVT_CD    800u                  /* 两次翻转事件最小间隔 */
+
+static uint8_t flip_down = 0;                /* 当前是否处于扣屏态 */
+static uint32_t flip_hold_at = 0;            /* 当前极性开始持续的时刻(0=未持续) */
+static uint32_t flip_evt_at = 0;             /* 上次发翻转事件时刻 */
+
+static void mpu_flip_send(uint8_t evt, uint32_t now)
+{
+    flip_evt_at = now;
+    if (mpu_q) xQueueSend(mpu_q, &evt, 0);
+}
+
+static void mpu_flip_tick(uint32_t now)
+{
+    if (flip_evt_at && now - flip_evt_at < FLIP_EVT_CD) return;   /* 事件冷却(防翻转过程连发) */
+    if (!flip_down)
+    {
+        if (gz_f < FLIP_DOWN_G)
+        {
+            if (!flip_hold_at) flip_hold_at = now;
+            else if (now - flip_hold_at >= FLIP_HOLD_MS)
+            {
+                flip_down = 1; flip_hold_at = 0;
+                mpu_flip_send(EVT_FLIP_DOWN, now);
+            }
+        }
+        else flip_hold_at = 0;
+    }
+    else
+    {
+        if (gz_f > FLIP_UP_G)
+        {
+            if (!flip_hold_at) flip_hold_at = now;
+            else if (now - flip_hold_at >= RAISE_HOLD_MS)
+            {
+                flip_down = 0; flip_hold_at = 0;
+                mpu_flip_send(EVT_RAISE, now);
+            }
+        }
+        else flip_hold_at = 0;
+    }
+}
+
 static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, float gzd)
 {
-    static float gx_f, gy_f, gz_f;
-    static uint8_t g_init = 0;
     static uint32_t cd_until = 0;
     static uint8_t  need_still = 0;        /* 1=刚触发过, 需先静止才允许再次触发 */
     static uint32_t still_since = 0;       /* 开始静止的时刻(0=仍在动) */
@@ -369,6 +426,9 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
     gz_f += alpha * ((float)az - gz_f);
 
     now = (uint32_t)(esp_timer_get_time() / 1000);
+
+    mpu_flip_tick(now);                      /* 扣屏/抬腕检测(独立于摇动冷却) */
+
     if (now < cd_until) return;              /* 最小间隔 */
 
     mag = sqrtf(gx_f * gx_f + gy_f * gy_f + gz_f * gz_f);
@@ -392,7 +452,7 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
     /* 触发判定: 取主导轴(而非固定优先级, 防单轴动作混入他轴分量被误判):
      *  ① 转腕型(PCB): 主导角速度轴判动作, 且分轴设阈(上下摇灵敏/左右摇收紧)
      *     - 横滚大 = 左右摇(横 0→±30): gx>0 -> EVT_LONG_OK(退出), 反向 -> EVT_OK(确认) [实测对调]
-     *     - 俯仰大 = 上下摇(俯 +10→+40=上摇, +10→-30=下摇): gy>0 -> EVT_UP, 反向 -> EVT_DOWN
+     *     - 俯仰大 = 上下摇: 物理下摇(gy>0,+40侧)->EVT_UP, 上摇(gy<0,-30侧)->EVT_DOWN [事件反向]
      *     - 航向(gz) 大仍归左右摇(平放桌面水平转腕的兜底, 对调与横滚一致)
      *     - 优势校验: 次大轴达主导轴 1/DOMINANCE 即视为混合动作不触发(防上下摇带横滚误报左右)
      *     - 回摆防护: 同轴反号在 RETURN_GUARD_MS 内再触发 = 摇动回弹, 直接丢弃
@@ -404,6 +464,7 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
         static uint8_t  last_ax = 0;     /* 上次转腕触发轴: 1=横滚 2=俯仰 3=航向(回摆防护) */
         static int8_t   last_sn = 0;     /* 上次触发符号(+1/-1) */
         static uint32_t last_at = 0;     /* 上次触发时刻 ms */
+        static float    last_gv = 0;     /* 上次触发的角速度幅值(判回弹用) */
         {
             float ga = fabsf(gxd), gb = fabsf(gyd), gc = fabsf(gzd);
             uint8_t ax = 0;
@@ -423,19 +484,22 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
             }
             if (ax != 0)
             {
-                /* 回摆防护: 同轴反号且在防护窗内 = 上次摇动的回弹, 丢弃(不动冷却/归位状态) */
+                float gsel = (ax == 1) ? ga : ((ax == 2) ? gb : gc);
+                /* 回摆防护: 同轴反号 + 防护窗内 + 强度明显弱于上次 = 被动回弹, 丢弃;
+                 * 等强度反号是有意的反向甩(如 上上下下 / 左右左右 序列), 必须放行 */
                 if (last_ax == ax && last_sn == -sn &&
-                    now - last_at < RETURN_GUARD_MS)
+                    now - last_at < RETURN_GUARD_MS &&
+                    gsel < last_gv * REBOUND_RATIO)
                 {
                     return;
                 }
                 switch (ax)
                 {
                     case 1:  evt = (sn > 0) ? EVT_LONG_OK : EVT_OK;      break;  /* 横滚=左右摇(PCB已对调) */
-                    case 2:  evt = (sn > 0) ? EVT_UP      : EVT_DOWN;    break;  /* 俯仰=上下摇(PCB) */
+                    case 2:  evt = (sn > 0) ? EVT_UP      : EVT_DOWN;    break;  /* 俯仰=上下摇: +40=物理下摇发UP, -30=上摇发DOWN */
                     default: evt = (sn > 0) ? EVT_OK      : EVT_LONG_OK; break;  /* 航向=左右摇兜底(同步对调) */
                 }
-                last_ax = ax; last_sn = sn; last_at = now;
+                last_ax = ax; last_sn = sn; last_at = now; last_gv = gsel;
             }
             else if (fabsf(vert) > SHAKE_THRESH || hmag > SHAKE_THRESH)
             {
