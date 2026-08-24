@@ -599,8 +599,8 @@ static void on_event(uint8_t evt)
             ui_pop();
             break;
 
-        case ST_MPU:                        /* 平衡: 实时姿态+摇动反馈; 仅OK/长按OK返回设置(摇动不退出) */
-            if (evt == EVT_OK || evt == EVT_LONG_OK)
+        case ST_MPU:                        /* 平衡: 实时姿态+摇动反馈; 仅物理按键返回设置(摇动的确认/退出被过滤, 保住左右摇演示) */
+            if ((evt == EVT_OK || evt == EVT_LONG_OK) && !MPU_EvtWasShake())
             {
                 ui_pop();
             }

@@ -7,10 +7,12 @@
 /* 按键 GPIO 布局(改这里即可调整按键映射):
  *   UI_KEY_UP   = 内容上移
  *   UI_KEY_DOWN = 内容下移
- *   UI_KEY_OK   = 确认当前功能 */
-#define UI_KEY_UP      4
+ *   UI_KEY_OK   = 确认当前功能
+ * PCB 版实测接线: 上=GPIO5 / 下=GPIO6 / 确认=GPIO4(旧板为 上4/下6/确认5);
+ * 若换板只改这三个值, 轮询/待机/长按连发逻辑全部跟随本定义 */
+#define UI_KEY_UP      5
 #define UI_KEY_DOWN    6
-#define UI_KEY_OK      5
+#define UI_KEY_OK      4
 
 /* ================= 界面可调参数(改这里即可调整界面) ================= */
 /* 界面主题色(UI_COLOR_BG/MENU/...)已定义于 lcd.h, 全工程共用 */

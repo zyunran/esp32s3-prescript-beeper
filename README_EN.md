@@ -41,7 +41,7 @@ An ESP32-S3 firmware for a desktop **pager (BB-machine)**-shaped personal termin
 | Module | Pins |
 |--------|------|
 | LCD ST7789 284×76 (SPI2 60MHz) | SCL=`7` SDA=`8` CS=`9` RST=`10` DC=`11` BLK=`12` (backlight on when LOW) |
-| Buttons Up / OK / Down (internal pull-up, pressed = LOW) | `4` / `5` / `6` |
+| Buttons Up / Down / OK (internal pull-up, pressed = LOW; PCB rev. wiring: Up=`5`, Down=`6`, OK=`4`) | see left |
 | Active buzzer (sounds when LOW) | `15` |
 | MAX98357A amp (I2S) | BCLK=`16` LRC=`17` DIN=`18` SD=`13` (LOW = off to avoid pop) |
 | DS1302 RTC (3-wire bit-bang) | CLK=`2` DAT=`14` CE/RST=`21` |

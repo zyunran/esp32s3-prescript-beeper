@@ -289,19 +289,25 @@ float MPU_Roll(void)   { return f_roll; }
 float MPU_Pitch(void)  { return f_pitch; }
 float MPU_Yaw(void)    { return f_yaw; }
 
-/* ================= 摇动检测 =================
- * 方向: 转腕型由横滚角速度 gxd 判向(安装/握持姿态不同方向可能反, 见下方交换说明);
- *       平移型由重力投影判向: vert = dyn·ĝ(动态分量沿真实竖直).
+/* ================= 摇动检测(PCB 版安装校准) =================
+ * PCB 静态基准实测: 平躺 横0/俯+10/航0; 竖立 俯-60.
+ * 动作实测摆幅:   左右摇 横滚 0→±30; 上下摇 俯仰 +10→+40(上摇) / +10→-30(下摇).
+ * 方向: 转腕型取三轴主导角速度判动作, 符号判方向(与旧板相反: 横滚=左右[已对调], 俯仰=上下);
+ *       分轴阈值: 上下摇(俯仰)更灵敏, 左右摇(横滚/航向)收紧防误触;
+ *       平移型由重力投影判向: vert = dyn·ĝ(动态分量沿真实竖直, 与安装无关).
  *   上摇 -> EVT_UP(上滑); 下摇 -> EVT_DOWN(下滑)
  * 触发: ① 竖直加速度超 SHAKE_G(平移摇动);
- *       ② 角速度超 SHAKE_GYRO 且竖直分量够(转腕/甩动型) */
-#define SHAKE_G        0.8f                  /* 平移竖直加速度触发阈值 g */
+ *       ② 角速度超分轴阈值 SHAKE_GYRO_UD/LR 且竖直分量够(转腕/甩动型) */
+#define SHAKE_G        0.8f                  /* 平移竖直加速度触发阈值 g(重力投影法与安装无关, 不随 PCB 改) */
 #define SHAKE_THRESH   ((int32_t)(SHAKE_G * ACCEL_G))
-#define SHAKE_GYRO     80.0f                 /* 转腕角速度阈值 °/s(实测本机左右摇俯仰 gy 约100, 80 可稳定触发) */
-#define SHAKE_COOLDOWN 350u                  /* 两次摇动最小间隔 ms */
+#define SHAKE_COOLDOWN 300u                  /* 两次摇动最小间隔 ms */
+#define SHAKE_GYRO_LR  70.0f                 /* 左右摇(横滚/航向)阈值 °/s: 实测易误触, 调高收紧 */
+#define SHAKE_GYRO_UD  45.0f                 /* 上下摇(俯仰)阈值 °/s: 实测有时失效, 调低提灵敏度 */
+#define RETURN_GUARD_MS 500u                 /* 回摆防护窗 ms: 同轴反号再触发视为回弹丢弃 */
+#define DOMINANCE       1.25f                /* 主导轴优势系数: 次轴达主导80%即混合动作, 不触发 */
 /* 归位锁: 触发后需设备静止片刻才允许再次触发, 防止后摇归位(反向回摆)误触发 */
 #define STILL_VERT     (0.25f * ACCEL_G)     /* 静止判定: 竖直加速度阈值 g */
-#define STILL_GYRO     60.0f                 /* 静止判定: 横滚角速度阈值 °/s */
+#define STILL_GYRO     45.0f                 /* 静止判定: 角速度阈值 °/s(与上下摇阈值一致) */
 #define STILL_MS       60u                   /* 需连续静止时长 ms */
 #define EVT_UP         1                     /* 与 main.c 按键事件一致 */
 #define EVT_OK         2
@@ -315,6 +321,7 @@ static uint32_t mpu_last_retry = 0;           /* 探测重试时刻(全局: 唤�
 static volatile uint8_t mpu_shake_en = 1;     /* 摇动检测开关(设置可关, 只禁摇动): 采样任务与设置侧跨任务, volatile */
 static volatile uint8_t mpu_shake_dir = 0;    /* 最近摇动方向: 1=上 2=下 3=左 4=右(平衡页反馈) */
 static volatile uint32_t mpu_shake_at = 0;    /* 摇动时刻 ms */
+static volatile uint32_t mpu_ok_evt_at = 0;   /* 最近一次摇动产生的 确认/退出 事件入队时刻 ms(平衡页过滤用) */
 
 void MPU_SetShake(uint8_t on)
 {
@@ -382,27 +389,53 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
         return;
     }
 
-    /* 触发判定: 取主导轴(而非固定优先级, 防左右摇带横滚分量被误判为上下):
-     *  ① 转腕型: |gxd|(横滚) 与 |gzd|(航向) 谁大判方向
-     *     - 横滚大 = 上下摇: 上摇 gx>0 -> EVT_UP, 下摇 -> EVT_DOWN
-     *     - 航向大 = 左右摇: 左转 -> EVT_OK(确认), 右转 -> EVT_LONG_OK(退出)
+    /* 触发判定: 取主导轴(而非固定优先级, 防单轴动作混入他轴分量被误判):
+     *  ① 转腕型(PCB): 主导角速度轴判动作, 且分轴设阈(上下摇灵敏/左右摇收紧)
+     *     - 横滚大 = 左右摇(横 0→±30): gx>0 -> EVT_LONG_OK(退出), 反向 -> EVT_OK(确认) [实测对调]
+     *     - 俯仰大 = 上下摇(俯 +10→+40=上摇, +10→-30=下摇): gy>0 -> EVT_UP, 反向 -> EVT_DOWN
+     *     - 航向(gz) 大仍归左右摇(平放桌面水平转腕的兜底, 对调与横滚一致)
+     *     - 优势校验: 次大轴达主导轴 1/DOMINANCE 即视为混合动作不触发(防上下摇带横滚误报左右)
+     *     - 回摆防护: 同轴反号在 RETURN_GUARD_MS 内再触发 = 摇动回弹, 直接丢弃
      *  ② 平移型: |vert|(竖直) 与 水平分量(hmag) 谁大判方向
      *     - 竖直大 = 上下摇; 水平大 = 左右摇(方向取设备横向轴 lat)
-     * 若实测左右方向反, 把 EVT_OK/EVT_LONG_OK 互换即可. */
+     * 若方向仍不合手: 上下摇互换 EVT_UP/EVT_DOWN; 左右摇互换 EVT_OK/EVT_LONG_OK. */
     {
         float hmag = sqrtf(dx * dx + dy * dy);
+        static uint8_t  last_ax = 0;     /* 上次转腕触发轴: 1=横滚 2=俯仰 3=航向(回摆防护) */
+        static int8_t   last_sn = 0;     /* 上次触发符号(+1/-1) */
+        static uint32_t last_at = 0;     /* 上次触发时刻 ms */
         {
-            /* 转腕主导(三轴取最大): 横滚 gx 大 = 上下摇; 俯仰 gy / 航向 gz 大 = 左右摇
-             * 实测: 本机左右摇以俯仰 gy 为主(峰值约100°/s), 上下摇以横滚 gx 为主.
-             * 方向: 左右由主导轴符号定, 若左右反了把下方 EVT_OK/EVT_LONG_OK 互换. */
             float ga = fabsf(gxd), gb = fabsf(gyd), gc = fabsf(gzd);
-            float gmax = (ga > gb) ? ga : gb;
-            if (gc > gmax) gmax = gc;
-            if (gmax > SHAKE_GYRO)
+            uint8_t ax = 0;
+            int8_t  sn = 0;
+            /* 三轴取最大定主导轴, 各轴过各自阈值才候选 */
+            if (ga >= gb && ga >= gc)      { if (ga >= SHAKE_GYRO_LR) { ax = 1; sn = (gxd > 0) ? 1 : -1; } }
+            else if (gb >= gc)             { if (gb >= SHAKE_GYRO_UD) { ax = 2; sn = (gyd > 0) ? 1 : -1; } }
+            else                           { if (gc >= SHAKE_GYRO_LR) { ax = 3; sn = (gzd > 0) ? 1 : -1; } }
+            /* 主导优势校验: 不够突出 = 混合动作, 本帧不触发(等下一帧更纯的时刻) */
+            if (ax != 0)
             {
-                if (gb >= ga && gb >= gc)   evt = (gyd > 0) ? EVT_OK : EVT_LONG_OK;  /* 俯仰=左右 */
-                else if (gc > ga)           evt = (gzd > 0) ? EVT_LONG_OK : EVT_OK;  /* 航向=左右 */
-                else                        evt = (gxd > 0) ? EVT_UP : EVT_DOWN;     /* 横滚=上下 */
+                float g1 = (ax == 1) ? ga : ((ax == 2) ? gb : gc);
+                float g2 = (ax == 1) ? ((gb > gc) ? gb : gc)
+                         : (ax == 2) ? ((ga > gc) ? ga : gc)
+                                     : ((ga > gb) ? ga : gb);
+                if (g1 < g2 * DOMINANCE) ax = 0;
+            }
+            if (ax != 0)
+            {
+                /* 回摆防护: 同轴反号且在防护窗内 = 上次摇动的回弹, 丢弃(不动冷却/归位状态) */
+                if (last_ax == ax && last_sn == -sn &&
+                    now - last_at < RETURN_GUARD_MS)
+                {
+                    return;
+                }
+                switch (ax)
+                {
+                    case 1:  evt = (sn > 0) ? EVT_LONG_OK : EVT_OK;      break;  /* 横滚=左右摇(PCB已对调) */
+                    case 2:  evt = (sn > 0) ? EVT_UP      : EVT_DOWN;    break;  /* 俯仰=上下摇(PCB) */
+                    default: evt = (sn > 0) ? EVT_OK      : EVT_LONG_OK; break;  /* 航向=左右摇兜底(同步对调) */
+                }
+                last_ax = ax; last_sn = sn; last_at = now;
             }
             else if (fabsf(vert) > SHAKE_THRESH || hmag > SHAKE_THRESH)
             {
@@ -419,7 +452,16 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
     need_still = 1; still_since = 0;
     mpu_shake_dir = (evt == EVT_UP) ? 1 : (evt == EVT_DOWN) ? 2 : (evt == EVT_OK) ? 3 : 4;
     mpu_shake_at = now;
+    if (evt == EVT_OK || evt == EVT_LONG_OK) mpu_ok_evt_at = now;
     if (mpu_q) xQueueSend(mpu_q, &evt, 0);
+}
+
+/* 最近(<200ms)是否有摇动产生的 确认/退出 事件: 供平衡页过滤 —— 否则左右摇会立即
+ * 触发退出/确认离开本页, 看不到平衡页的左右摇方向反馈; 过滤后仅物理按键可退出 */
+uint8_t MPU_EvtWasShake(void)
+{
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    return (mpu_ok_evt_at != 0) && (now - mpu_ok_evt_at < 200);
 }
 
 /* ================= 采样任务: 读六轴 -> 互补滤波 -> 摇动检测 =================
