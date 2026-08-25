@@ -17,6 +17,7 @@
 #include "GACHA.h"
 #include "NET.h"
 #include "SOUND.h"
+#include "snd_effects.h"
 #include "SETTING.h"
 #include "TIMER.h"
 #include "ALARM.h"
@@ -307,8 +308,35 @@ static void input_task(void *arg)
 }
 
 /* ================= 事件处理(按当前界面状态) ================= */
+/* 按键音: 根据设置播放蜂鸣/短音频(0=关 1=蜂鸣 2=音频 3=双) */
+static void play_key_sound(uint8_t evt)
+{
+    uint8_t mode = SET_KeySound();
+    const int16_t *pcm = NULL;
+    uint32_t frames = 0;
+    if (mode == 0) return;
+    if (evt == EVT_UP || evt == EVT_DOWN)
+    {
+        pcm = snd_key_up;
+        frames = snd_key_up_frames;
+    }
+    else if (evt == EVT_OK)
+    {
+        pcm = snd_key_ok;
+        frames = snd_key_ok_frames;
+    }
+    else if (evt == EVT_LONG_OK)
+    {
+        pcm = snd_key_back;
+        frames = snd_key_back_frames;
+    }
+    if (mode == 1 || mode == 3) BUZZER_Beep(1);
+    if ((mode == 2 || mode == 3) && pcm) SOUND_Play(pcm, frames);
+}
+
 static void on_event(uint8_t evt)
 {
+    if (evt != EVT_NONE) play_key_sound(evt);
     switch (ui_state)
     {
         case ST_MAIN:

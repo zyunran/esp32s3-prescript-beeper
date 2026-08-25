@@ -5,7 +5,7 @@ set(include_dirs
         .)
 
 set(requires
-        LCD UI INSTRUCTION esp_hw_support esp_timer nvs_flash)
+        LCD UI INSTRUCTION AUDIO esp_hw_support esp_timer nvs_flash)
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
 

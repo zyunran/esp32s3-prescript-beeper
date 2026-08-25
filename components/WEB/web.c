@@ -263,6 +263,7 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
             for (k = 0; k < un; k++) cJSON_AddItemToArray(uarr, cJSON_CreateString(ul[k]));
         }
         cJSON_AddNumberToObject(root, "beep", SET_Beep());
+        cJSON_AddNumberToObject(root, "key_sound", SET_KeySound());
         cJSON_AddNumberToObject(root, "vol", SET_Vol());
         cJSON_AddNumberToObject(root, "timeout", SET_TimeoutSec());
         cJSON_AddNumberToObject(root, "oracle_n", SET_OracleN());
@@ -292,7 +293,7 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddStringToObject(garble, "gb", h2);
         cJSON_AddNumberToObject(garble, "dl", dl);
         cJSON_AddNumberToObject(garble, "rv", rv);
-        cJSON_AddNumberToObject(garble, "fnt", INS_Font());   /* 破译字号 0/1/2 = 16/24/32px */
+        cJSON_AddNumberToObject(garble, "fnt", INS_Font());   /* 破译字号 0..3 = 16/24/32/64px */
         cJSON_AddItemToObject(root, "garble", garble);
     }
 
@@ -497,6 +498,15 @@ static int web_apply_sound(cJSON *root)
     return 1;
 }
 
+static int web_apply_key_sound(cJSON *root)
+{
+    cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
+    if (!ks) return 1;
+    if (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3) return 0;
+    SET_SetKeySound((uint8_t)ks->valueint);
+    return 1;
+}
+
 static int web_apply_timeout(cJSON *root)
 {
     cJSON *timeout = cJSON_GetObjectItem(root, "timeout");
@@ -553,7 +563,7 @@ static int web_apply_decode(cJSON *root)
         }
         if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5)) return 0;
         if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10)) return 0;
-        if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 2)) return 0;
+        if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 3)) return 0;
         if (def && gb)
         {
             INS_SetParams((uint16_t)hex_to_rgb565(def->valuestring),
@@ -686,8 +696,10 @@ static int web_cfg_validate(cJSON *root)
         }
         if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5)) return 0;
         if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10)) return 0;
-        if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 2)) return 0;
+        if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 3)) return 0;
     }
+    cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
+    if (ks && (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3)) return 0;
     return 1;
 }
 
@@ -748,7 +760,7 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
     if (!web_apply_colors(root) || !web_apply_ins(root) || !web_apply_ans(root) ||
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||
-        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_decode(root))
+        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) || !web_apply_decode(root))
     {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid field");

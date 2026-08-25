@@ -1,7 +1,8 @@
 set(srcs
         BUZZER.c
         SOUND.c
-        snd_data.c)
+        snd_data.c
+        snd_effects.c)
 
 set(include_dirs
         .)

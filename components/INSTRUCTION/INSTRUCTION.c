@@ -12,6 +12,7 @@
 #include "SOUND.h"
 #include "TODO.h"
 #include "snd_data.h"
+#include "snd_effects.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "esp_log.h"
@@ -42,10 +43,14 @@ volatile uint16_t INS_REVEAL_DELAY_MS = 80;       /* 逐字揭示间隔 ms */
 #define INS_GLYPH_MAX         40             /* 每行最多字数(内部缓冲) */
 #define INS_TEXT_MAX_W        (LCD_WIDTH - 12) /* 文本最大宽 */
 
-/* 破译字号(运行时可调, 设置菜单+WEB, 存NVS "ins2"/"fnt"; 0=16px 1=24px 2=32px) */
+/* 破译字号(运行时可调, 设置菜单+WEB, 存NVS "ins2"/"fnt"; 0=16px 1=24px 2=32px 3=64px) */
 static uint8_t ins_font = 1;                 /* 默认 24px */
 
-static uint8_t ins_font_h(void) { return (uint8_t)(16 + ins_font * 8); }   /* 单字高 16/24/32 */
+static uint8_t ins_font_h(void)
+{
+    static const uint8_t fh[] = { 16, 24, 32, 64 };
+    return fh[ins_font > 3 ? 3 : ins_font];  /* 单字高 16/24/32/64 */
+}
 static uint8_t ins_font_w(const char *ch) { return (uint8_t)(ins_font_h() / (ch[0] & 0x80 ? 1 : 2)); } /* 汉字=高, ASCII=高/2 */
 static uint8_t ins_max_lines(void)           /* 屏高允许的最大行数(自动匹配) */
 {
@@ -88,6 +93,15 @@ static const char *const ins_defaults[] = {
     "指着天花板低语“是”。",
 };
 #define INS_DEFAULT_COUNT (sizeof(ins_defaults) / sizeof(ins_defaults[0]))
+
+/* ================= Limbus 大字专用指令库(字号=64px 时使用) =================
+ * 默认第一条为 "_CLEAR.__"; 仅存 ASCII, 适合 64px 超大终端单行/整屏显示. */
+static const char *const ins_defaults_limbus[] = {
+    "_CLEAR.__",
+     "FURIOSO.__",
+  
+};
+#define INS_DEFAULT_LIMBUS_COUNT (sizeof(ins_defaults_limbus) / sizeof(ins_defaults_limbus[0]))
 
 /* ================= 特殊代行者: 里恩专属指令库 =================
  * 只有当前使用者为里恩时才进入随机池, 且里恩只会收到这里的指令. */
@@ -521,7 +535,8 @@ static void ins_scr_step(void)
                 }
                 ins_scr_render();
                 SOUND_Stop();                              /* 停进行音 */
-                BUZZER_Beep((uint8_t)(1 + (esp_random() & 1)));   /* 破译完成: 蜂鸣器提示一响(1~2下) */
+                SOUND_Play(snd_beep2, snd_beep2_frames);   /* 破译完成: 两声哔哔音频 */
+                BUZZER_Beep(3);                            /* 破译完成: 蜂鸣器三声哔哔 */
             }
         }
     }
@@ -533,7 +548,6 @@ static void ins_presets_load(void);   /* 前置声明(定义在下文) */
 void INS_Init(void)
 {
     ins_mux = xSemaphoreCreateRecursiveMutex();   /* M4: WEB 任务配置与 UI 读取互斥 */
-    ins_presets_load();
     /* 破译参数 + 当前使用者(NVS "ins2") */
     {
         nvs_handle_t h;
@@ -562,8 +576,9 @@ void INS_Init(void)
             }
             nvs_close(h);
         }
-        if (ins_font > 2) ins_font = 2;   /* 钳位: 0=16 1=24 2=32px */
+        if (ins_font > 3) ins_font = 3;   /* 钳位: 0=16 1=24 2=32 3=64px */
     }
+    ins_presets_load();   /* 根据当前字号加载对应指令库(64px 用 Limbus 大字库) */
 }
 
 const char *INS_UserName(void)
@@ -687,12 +702,12 @@ void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv)
     ins_unlock();
 }
 
-/* 破译字号读写(0=16 1=24 2=32px; 设置菜单+WEB, 存NVS "ins2"/"fnt") */
+/* 破译字号读写(0=16 1=24 2=32 3=64px; 设置菜单+WEB, 存NVS "ins2"/"fnt") */
 uint8_t INS_Font(void) { return ins_font; }
 
 void INS_SetFont(uint8_t f)
 {
-    if (f > 2) f = 2;
+    if (f > 3) f = 3;
     ins_lock();
     ins_font = f;
     nvs_handle_t h;
@@ -703,22 +718,32 @@ void INS_SetFont(uint8_t f)
         nvs_close(h);
     }
     ins_unlock();
+    ins_presets_load();   /* 字号变化后切换对应指令库(64px 用 Limbus 大字库) */
 }
 
-/* 从 NVS 读指令库; 无则用内置默认 */
+/* 当前字号对应的 NVS 指令库键: 64px 用独立库, 其余用默认库 */
+static const char *ins_presets_key(void)
+{
+    return (ins_font == 3) ? "presets64" : "presets";
+}
+
+/* 从 NVS 读指令库; 无则用内置默认(64px 时用 Limbus 大字指令库) */
 static void ins_presets_load(void)
 {
     nvs_handle_t h;
     size_t sz = 0;
     char *buf = NULL;
+    const char *key = ins_presets_key();
+    const char *const *defs = (ins_font == 3) ? ins_defaults_limbus : ins_defaults;
+    uint8_t def_cnt = (uint8_t)((ins_font == 3) ? INS_DEFAULT_LIMBUS_COUNT : INS_DEFAULT_COUNT);
     ins_preset_count = 0;
 
     if (nvs_open("ins", NVS_READONLY, &h) == ESP_OK)
     {
-        if (nvs_get_blob(h, "presets", NULL, &sz) == ESP_OK && sz > 0 && sz <= 8192)
+        if (nvs_get_blob(h, key, NULL, &sz) == ESP_OK && sz > 0 && sz <= 8192)
         {
             buf = malloc(sz + 1);   /* +1 放 NUL, 防末行无换行时越界读堆垃圾 */
-            if (buf && nvs_get_blob(h, "presets", buf, &sz) == ESP_OK)
+            if (buf && nvs_get_blob(h, key, buf, &sz) == ESP_OK)
             {
                 buf[sz] = '\0';     /* 保证以 NUL 结尾, 循环才可安全收尾 */
                 char *p = buf, *nl;
@@ -737,12 +762,12 @@ static void ins_presets_load(void)
         if (buf) free(buf);
         nvs_close(h);
     }
-    if (ins_preset_count == 0)               /* 无 NVS 数据 -> 内置默认 */
+    if (ins_preset_count == 0)               /* 无 NVS 数据 -> 内置默认(64px 用 Limbus 大字库) */
     {
-        uint8_t n = (INS_DEFAULT_COUNT < INS_PRESET_MAX) ? (uint8_t)INS_DEFAULT_COUNT : (uint8_t)INS_PRESET_MAX;
+        uint8_t n = (def_cnt < INS_PRESET_MAX) ? def_cnt : (uint8_t)INS_PRESET_MAX;
         for (ins_preset_count = 0; ins_preset_count < n; ins_preset_count++)
         {
-            strncpy(ins_presets[ins_preset_count], ins_defaults[ins_preset_count], INS_PRESET_LEN - 1);
+            strncpy(ins_presets[ins_preset_count], defs[ins_preset_count], INS_PRESET_LEN - 1);
             ins_presets[ins_preset_count][INS_PRESET_LEN - 1] = '\0';
         }
     }
@@ -816,7 +841,7 @@ uint8_t INS_PresetsFromText(const char *text)
             }
             else
             {
-                if (nvs_set_blob(h, "presets", buf, o) != ESP_OK || nvs_commit(h) != ESP_OK)
+                if (nvs_set_blob(h, ins_presets_key(), buf, o) != ESP_OK || nvs_commit(h) != ESP_OK)
                 {
                     ESP_LOGE(TAG, "presets NVS write failed, rollback");
                     ok = 0;
@@ -855,7 +880,7 @@ void INS_Show(const char *text)
     /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下.
      * 起解码先急停蜂鸣(断 GPIO + 作废待响排程), 防蜂鸣器卡在低电平持续响 */
 
-    SOUND_PlayLoop(snd_progress, snd_progress_frames);   /* 乱码翻译进行音循环播放 */
+    SOUND_PlayLoop(snd_decode, snd_decode_frames);   /* 破译进行音(取自音频后段)循环播放 */
 
     ins_scr_render();
 }
@@ -870,7 +895,7 @@ void INS_ShowIns(const char *text)
         TODO_Add(text + 6);
         text += 6;
     }
-    if (strncmp(text, "致", 3) == 0)       /* 已有收件人 -> 原样 */
+    if (strncmp(text, "致", 3) == 0 || ins_font == 3)   /* 已有收件人, 或 64px 大字去"致xx"省空间 -> 原样 */
     {
         INS_Show(text);
         return;
@@ -924,6 +949,21 @@ static const char *const *ins_user_pool(const char *user, uint8_t *count)
 
 void INS_ShowRandom(void)
 {
+    /* 64px 大字模式: 只使用 64 专用指令库(默认第一条 _CLEAR.__), 不走生成模板/特殊使用者库 */
+    if (ins_font == 3)
+    {
+        ins_lock();
+        if (ins_preset_count > 0)
+        {
+            uint8_t idx = (uint8_t)(esp_random() % ins_preset_count);
+            ins_unlock();
+            INS_ShowByIndex(idx);
+            return;
+        }
+        ins_unlock();
+        return;
+    }
+
     uint8_t uc = 0;
     const char *user_now = INS_UserName();   /* 先快照, 判定/抽取使用同一份使用者名 */
     const char *const *upool = ins_user_pool(user_now, &uc);

@@ -8,6 +8,7 @@ typedef enum {
     SET_IDX_SCREEN = 0,    /* 息屏时长 */
     SET_IDX_VOL,           /* 音量 */
     SET_IDX_BEEP,          /* 蜂鸣器开/关 */
+    SET_IDX_KEY,           /* 按键音: 关/蜂鸣/音频/双 */
     SET_IDX_SHAKE,         /* 摇动翻页开/关 */
     SET_IDX_ORACLE_N,      /* 神谕每日推送次数 */
     SET_IDX_ORACLE_WIN,    /* 神谕时段 */
@@ -29,6 +30,8 @@ void SET_Init(void);                       /* 加载 NVS 设置并应用副作�
 uint16_t SET_TimeoutSec(void);             /* 熄屏秒数(0=永不) */
 uint8_t  SET_Vol(void);                    /* 音量 0~100 */
 uint8_t  SET_Beep(void);                   /* 蜂鸣器开关(有源, 0=关) */
+uint8_t  SET_KeySound(void);               /* 按键音: 0=关 1=蜂鸣 2=音频 3=双 */
+void     SET_SetKeySound(uint8_t v);       /* 设按键音并保存 */
 uint8_t  SET_OracleN(void);                /* 神谕每日条数(0=关) */
 uint8_t  SET_OracleWin(void);              /* 神谕时段预设索引 */
 const uint16_t *SET_OracleWinRange(void);  /* 神谕时段 [start,end] 当日分钟 */

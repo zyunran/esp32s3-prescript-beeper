@@ -11,6 +11,8 @@
 #include "LCD.h"   /* 仅用 LCD_WIDTH/HEIGHT 屏幕几何宏(显式声明驱动依赖) */
 #include "UI.h"
 #include "INSTRUCTION.h"
+#include "SOUND.h"
+#include "snd_effects.h"
 #include "nvs_flash.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -138,6 +140,7 @@ static int16_t gc_box_y, gc_bx0;       /* 方框区几何 */
 static int16_t gc_lx, gc_line_end;     /* 扫描线当前位置/终点 */
 static uint32_t gc_anim_last;          /* 上帧时刻 */
 static uint32_t gc_hold_end;           /* 扫描完成后停留结束时刻 */
+static uint8_t gc_anim_snd[GACHA_TEN_N]; /* 各框是否已播过扫过音(每个框只响一次) */
 
 static void gacha_anim_render(void)
 {
@@ -186,6 +189,24 @@ static void gacha_anim_tick(void)
         {
             gc_hold_end = now + GACHA_HOLD_MS;   /* 扫描结束, 开始停留 */
             return;
+        }
+        {
+            uint8_t i;
+            for (i = 0; i < GACHA_TEN_N; i++)
+            {
+                int16_t bx = gc_bx0 + i * GACHA_BOX_PITCH;
+                int16_t center = bx + GACHA_BOX_SIZE / 2;
+                if (!gc_anim_snd[i] && gc_lx >= center)
+                {
+                    gc_anim_snd[i] = 1;
+                    if (gc_rar[i] == GACHA_RAR_RED)
+                        SOUND_Play(snd_ten_red, snd_ten_red_frames);
+                    else if (gc_rar[i] == GACHA_RAR_GOLD || gc_rar[i] == GACHA_RAR_EGO)
+                        SOUND_Play(snd_ten_gold, snd_ten_gold_frames);
+                    else
+                        SOUND_Play(snd_ten_gray, snd_ten_gray_frames);
+                }
+            }
         }
         gacha_anim_render();
     }
@@ -535,23 +556,18 @@ static void gacha_start_ten(void)
     gc_line_end = LCD_WIDTH + 2;        /* 完全移出屏外右侧 */
     gc_anim_last = gacha_now_ms();
     gc_phase = GC_ANIM;
+    memset(gc_anim_snd, 0, sizeof(gc_anim_snd));
     gacha_anim_render();
 }
 
 /* 我方胜利: 剩余硬币重掷(正面+=威力/反面+=0), 总伤害=基础×(1+轮数×3%), 计入积分 */
 static void coin_score_battle(void)
 {
-    int32_t base = 0;
-    uint8_t i;
+    int32_t base;
     gacha_lock();
     coin_score_ensure();
-    for (i = 0; i < cbm_me_c; i++)
-    {
-        if (esp_random() & 1)
-        {
-            base += coin_skills[cbm_me].power;
-        }
-    }
+    /* 伤害 = 胜利回合实际点数(不再重新随机掷币, 避免 20 点打赢只算 1 点) */
+    base = cbm_me_p;
     coin_dmg_last = base * (100 + (int32_t)cbm_round * 3) / 100;
     if (coin_dmg_last < 1) coin_dmg_last = 1;   /* 胜利至少1点, 杜绝"胜伤0" */
     coin_score_total += coin_dmg_last;   /* 累计终身, 只增不减 */
@@ -604,6 +620,7 @@ static void cbm_roll(void)
     cbm_round++;
     cbm_flip_until = cbm_now_ms() + COIN_FLIP_MS;
     cbm_flip_last = cbm_now_ms();
+    SOUND_Play(snd_coin, snd_coin_frames);   /* 硬币投掷: 叮叮声 */
     gacha_coin_render();
 }
 
@@ -635,6 +652,7 @@ static void cbm_resolve(void)
     {
         return;                          /* 翻转中忽略按键 */
     }
+    SOUND_Play(snd_clash, snd_clash_frames);   /* 对拼: 金属碰撞声 */
     gacha_lock();
     if (cbm_me_p > cbm_op_p)      { cbm_last_res = 1; if (cbm_op_c > 0) cbm_op_c--; }
     else if (cbm_me_p < cbm_op_p) { cbm_last_res = 2; if (cbm_me_c > 0) cbm_me_c--; }
