@@ -28,8 +28,8 @@ typedef struct {
 
 /* ================= 稀有度颜色(固定三色) ================= */
 #define GACHA_COLOR_GRAY  GRAY
-#define GACHA_COLOR_RED   0xE249   /* ★2红人格: 清晰红(#E04848), 与★1灰区分明显又不刺眼 */
-#define GACHA_COLOR_GOLD  0xEE08   /* ★3金/EGO: 亮金(#E8C040), 醒目又不刺眼 */
+#define GACHA_COLOR_RED   GACHA_RED   /* ★2红人格: 清晰红(#E04848), 与★1灰区分明显又不刺眼 */
+#define GACHA_COLOR_GOLD  GACHA_GOLD   /* ★3金/EGO: 亮金(#E8C040), 醒目又不刺眼 */
 
 /* ================= 十连动画可调参数 ================= */
 #define GACHA_BOX_SIZE    16      /* 方框边长 px */
@@ -47,7 +47,7 @@ typedef struct {
 /* ================= 抽取语音可调参数 ================= */
 #define GACHA_TYPE_STEP   1       /* 语音打字机每帧字符数 */
 #define GACHA_TYPE_MS     25      /* 打字机帧间隔 ms(越小越快) */
-#define GACHA_VOICE_COLOR 0xCF18  /* 语音文字色(淡绿白, 与主题一致) */
+#define GACHA_VOICE_COLOR GACHA_VOICE  /* 语音文字色(淡绿白, 与主题一致) */
 
 /* ================= 抽卡方框/扫描线颜色(主题色, 定义于 lcd.h) ================= */
 #define GACHA_COLOR_BOX   UI_COLOR_FRAME   /* 空方框边框(柔和绿) */

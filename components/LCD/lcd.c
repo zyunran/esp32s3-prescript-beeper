@@ -7,12 +7,12 @@
 #include "freertos/task.h"
 
 /* 界面主题色(运行时可改: WEB 配置页写入并持久化 NVS; 默认护眼"柔和绿") */
-uint16_t UI_COLOR_BG     = 0x10C2;   /* #141A14 深暖绿黑 */
-uint16_t UI_COLOR_MENU   = 0xCF18;   /* #C8E0C0 淡绿白 */
-uint16_t UI_COLOR_FRAME  = 0x8EB1;   /* #8FD48A 柔和绿 */
-uint16_t UI_COLOR_ICON   = 0x7E9A;   /* #7FD0D0 柔和青 */
-uint16_t UI_COLOR_TIME   = 0xCF18;   /* #C8E0C0 淡绿白 */
-uint16_t UI_COLOR_DATE   = 0xCF18;   /* #C8E0C0 淡绿白 */
+uint16_t UI_COLOR_BG     = THEME_BG;   /* #141A14 深暖绿黑 */
+uint16_t UI_COLOR_MENU   = THEME_MENU;   /* #C8E0C0 淡绿白 */
+uint16_t UI_COLOR_FRAME  = THEME_FRAME;   /* #8FD48A 柔和绿 */
+uint16_t UI_COLOR_ICON   = THEME_ICON;   /* #7FD0D0 柔和青 */
+uint16_t UI_COLOR_TIME   = THEME_TIME;   /* #C8E0C0 淡绿白 */
+uint16_t UI_COLOR_DATE   = THEME_DATE;   /* #C8E0C0 淡绿白 */
 
 void lcd_write_cmd(uint8_t cmd)
 {

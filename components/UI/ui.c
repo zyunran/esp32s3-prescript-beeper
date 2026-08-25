@@ -792,7 +792,7 @@ static void ui_time_draw_text(void)
     /* 网络图标(日期右侧): 绿=已连, 灰=未连 */
     if (ui_wifi_on != 0xFF)
     {
-        uint16_t c = ui_wifi_on ? UI_COLOR_FRAME : 0x3186;
+        uint16_t c = ui_wifi_on ? UI_COLOR_FRAME : UI_WIFI_OFF;
         if (ui_box_mode)   /* 白框滤镜: WiFi 图标改画空心框(边框用原图标色) */
         {
             uint8_t u, v;

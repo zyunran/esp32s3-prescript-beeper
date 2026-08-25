@@ -24,4 +24,23 @@
 #define LGRAYBLUE       0XA651      /* 浅灰蓝色(中间层颜色) */
 #define LBBLUE          0X2B12      /* 浅棕蓝色(选择条目的反色) */
 
+
+/* ================= 主题/界面调色板(默认护眼柔和绿, RGB565) ================= */
+#define THEME_BG        0x10C2   /* 背景 #141A14 深暖绿黑 */
+#define THEME_MENU      0xCF18   /* 菜单文字 #C8E0C0 淡绿白 */
+#define THEME_FRAME     0x8EB1   /* 选中框 #8FD48A 柔和绿 */
+#define THEME_ICON      0x7E9A   /* 图标/扫描线 #7FD0D0 柔和青 */
+#define THEME_TIME      0xCF18   /* 时钟 #C8E0C0 淡绿白 */
+#define THEME_DATE      0xCF18   /* 日期 #C8E0C0 淡绿白 */
+#define UI_WIFI_OFF     0x3186   /* WiFi 未连接图标灰 */
+
+/* ================= 业务/特殊色(集中管理) ================= */
+#define GACHA_RED       0xE249   /* ★2红人格 #E04848 */
+#define GACHA_GOLD      0xEE08   /* ★3金/EGO #E8C040 */
+#define GACHA_VOICE     0xCF18   /* 抽卡语音淡绿白 */
+
+/* ================= 指令库颜色(与全局主题解耦) ================= */
+#define INS_DEFAULT_RED 0xE249   /* 普通破译真字默认清晰红 */
+#define INS_GARBLE_BLUE 0x651D   /* 未破译乱码亮钢蓝 */
+
 #endif

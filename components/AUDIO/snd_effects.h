@@ -10,10 +10,6 @@ extern const int16_t snd_key_ok[];
 extern const uint32_t snd_key_ok_frames;
 extern const int16_t snd_key_back[];
 extern const uint32_t snd_key_back_frames;
-extern const int16_t snd_battle[];
-extern const uint32_t snd_battle_frames;
-extern const int16_t snd_ten[];
-extern const uint32_t snd_ten_frames;
 
 extern const int16_t snd_coin[];
 extern const uint32_t snd_coin_frames;
@@ -26,8 +22,4 @@ extern const uint32_t snd_ten_red_frames;
 extern const int16_t snd_ten_gold[];
 extern const uint32_t snd_ten_gold_frames;
 
-extern const int16_t snd_beep2[];
-extern const uint32_t snd_beep2_frames;
-extern const int16_t snd_decode[];
-extern const uint32_t snd_decode_frames;
 #endif /* __SND_EFFECTS_H */

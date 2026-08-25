@@ -12,7 +12,6 @@
 #include "SOUND.h"
 #include "TODO.h"
 #include "snd_data.h"
-#include "snd_effects.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "esp_log.h"
@@ -33,8 +32,8 @@ static void ins_lock(void)   { if (ins_mux) xSemaphoreTakeRecursive(ins_mux, por
 static void ins_unlock(void) { if (ins_mux) xSemaphoreGiveRecursive(ins_mux); }
 
 /* 破译参数(运行时可改, 默认护眼风格; WEB配置存NVS) */
-volatile uint16_t INS_SCR_DEFAULT     = 0xE249;   /* 破译真字: 清晰红 */
-volatile uint16_t INS_SCR_GARBLE      = 0x651D;   /* 未破译乱码: 亮钢蓝 */
+volatile uint16_t INS_SCR_DEFAULT     = INS_DEFAULT_RED;   /* 破译真字: 清晰红 */
+volatile uint16_t INS_SCR_GARBLE      = INS_GARBLE_BLUE;   /* 未破译乱码: 亮钢蓝 */
 volatile uint16_t INS_SCR_DELAY_MS    = 18;       /* 乱码刷新间隔 ms */
 volatile uint16_t INS_REVEAL_DELAY_MS = 80;       /* 逐字揭示间隔 ms */
 
@@ -64,18 +63,18 @@ static uint8_t ins_max_lines(void)           /* 屏高允许的最大行数(自�
  * 运行期指令库存 NVS(命名空间 "ins"), 可用 WEB 配置页增删改.
  * 支持 {#RRGGBB}/{} 颜色、{RAND:min-max} 随机数、{TIMER} 占位; 文字须在全字库内. */
 static const char *const ins_defaults[] = {
-    "致拉:明日正午之前在厉利的生日蛋糕中放入3根针。",
-    "致李德九:与您遇见的第3个人猜拳且出拳头,若您获胜则拔掉对方59根头发……",
+    "明日正午之前在厉利的生日蛋糕中放入3根针。",
+    "与您遇见的第3个人猜拳且出拳头,若您获胜则拔掉对方59根头发……",
     "拌以只吃泡沫塑料长大的黄粉虫,海鲜奶油意粉酱涂抹3次后用叉子将其吃掉。",
     "杀掉你画的画。",
     "将拉马库斯的脑叶搅个稀碎。",
-    "致乔恩:明日3时38分在某十字路口望向东方并挥7次手。",
+    "明日3时38分在某十字路口望向东方并挥7次手。",
     "搜捕L巢内的37岁人士并抽出脊椎。",
     "将今日遇见的第14个人的左腿与第26个人的右腿互换。",
     "屠杀拇指,无时限。",
     "将巢内的拇指余孽剁去手足,穿刺于尖桩之上……",
     "忠实履行阳传令传达的指令。",
-    "……致蔡宪。遇到在三岔路口处挥手7次的人时便直接跟着他直至他的家中。",
+    "……遇到在三岔路口处挥手7次的人时便直接跟着他直至他的家中。",
     "吃掉15个清道夫并抽取丝绸织布。",
     "斩开三次后巷夜晚的街道之光。期限为半年。",
     "斩首7名刀刃横在脖颈上时仍不放弃反抗的后巷居民。",
@@ -97,9 +96,8 @@ static const char *const ins_defaults[] = {
 /* ================= Limbus 大字专用指令库(字号=64px 时使用) =================
  * 默认第一条为 "_CLEAR.__"; 仅存 ASCII, 适合 64px 超大终端单行/整屏显示. */
 static const char *const ins_defaults_limbus[] = {
-    "_CLEAR.__",
-     "FURIOSO.__",
-  
+    "{#63A2EF}_CLEAR.__",
+    "{#63A2EF}FURIOSO.__",  
 };
 #define INS_DEFAULT_LIMBUS_COUNT (sizeof(ins_defaults_limbus) / sizeof(ins_defaults_limbus[0]))
 
@@ -535,7 +533,6 @@ static void ins_scr_step(void)
                 }
                 ins_scr_render();
                 SOUND_Stop();                              /* 停进行音 */
-                SOUND_Play(snd_beep2, snd_beep2_frames);   /* 破译完成: 两声哔哔音频 */
                 BUZZER_Beep(3);                            /* 破译完成: 蜂鸣器三声哔哔 */
             }
         }
@@ -880,7 +877,7 @@ void INS_Show(const char *text)
     /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下.
      * 起解码先急停蜂鸣(断 GPIO + 作废待响排程), 防蜂鸣器卡在低电平持续响 */
 
-    SOUND_PlayLoop(snd_decode, snd_decode_frames);   /* 破译进行音(取自音频后段)循环播放 */
+    SOUND_PlayLoop(snd_progress, snd_progress_frames);   /* 乱码翻译进行音循环播放 */
 
     ins_scr_render();
 }
