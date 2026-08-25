@@ -43,4 +43,30 @@
 #define INS_DEFAULT_RED 0xE249   /* 普通破译真字默认清晰红 */
 #define INS_GARBLE_BLUE 0x651D   /* 未破译乱码亮钢蓝 */
 
+
+/* ================= 主题预设(设置里一键切换) ================= */
+#define THEME_PRESET_N   3
+/* 预设0: 柔和绿(默认) */
+#define THEME0_BG        THEME_BG
+#define THEME0_MENU      THEME_MENU
+#define THEME0_FRAME     THEME_FRAME
+#define THEME0_ICON      THEME_ICON
+#define THEME0_TIME      THEME_TIME
+#define THEME0_DATE      THEME_DATE
+/* 预设1: 赛博青(柔和, 避免高亮刺眼) */
+#define THEME1_BG        0x0841   /* 深蓝黑背景 */
+#define THEME1_MENU      0x4D7F   /* 柔和青文字 */
+#define THEME1_FRAME     0x2D5B   /* 青灰选中框 */
+#define THEME1_ICON      0x2D5B   /* 青灰图标 */
+#define THEME1_TIME      0x4D7F   /* 柔和青时钟 */
+#define THEME1_DATE      0x4D7F   /* 柔和青日期 */
+
+/* 预设2: 深夜灰(柔和, 避免纯白刺眼) */
+#define THEME2_BG        0x2104   /* 深灰背景 */
+#define THEME2_MENU      0xC618   /* 浅灰文字 */
+#define THEME2_FRAME     0x8C71   /* 中灰选中框 */
+#define THEME2_ICON      0x8C71   /* 中灰图标 */
+#define THEME2_TIME      0xC618   /* 浅灰时钟 */
+#define THEME2_DATE      0xC618   /* 浅灰日期 */
+
 #endif

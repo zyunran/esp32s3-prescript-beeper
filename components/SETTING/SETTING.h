@@ -17,6 +17,7 @@ typedef enum {
     SET_IDX_RESET,         /* 初始化 */
     SET_IDX_INS_FONT,      /* 破译字号 */
     SET_IDX_CURSOR,        /* 光标样式 */
+    SET_IDX_THEME,         /* 主题预设: 柔和绿/赛博青/深夜黑白 */
     SET_IDX_EXIT,          /* 退出 */
     SET_IDX_COUNT,         /* 含"退出"的项数 */
 } setting_idx_t;

@@ -28,4 +28,12 @@ void TODO_Toggle(uint8_t i, uint8_t redraw);    /* 切换 PASS/恢复; redraw=1 
 void TODO_Del(uint8_t i);                      /* 删除第i条(后续前移) */
 void TODO_Clear(void);                         /* 清空全部 */
 
+/* 待办提醒时间(与闹钟类似, 网页可设; 每天到点提醒一次) */
+void TODO_SetRemind(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm); /* 设置提醒(24h时:分) */
+uint8_t TODO_RemindEn(uint8_t i);              /* 1=该条启用提醒 */
+uint8_t TODO_RemindHH(uint8_t i);              /* 提醒小时 0-23 */
+uint8_t TODO_RemindMM(uint8_t i);              /* 提醒分钟 0-59 */
+uint8_t TODO_RemindDue(void);                  /* 1=有待办提醒到点(内部标记当日已提醒) */
+const char *TODO_RemindText(void);             /* 当前到点待办文本 */
+
 #endif

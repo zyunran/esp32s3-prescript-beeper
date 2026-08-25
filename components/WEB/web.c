@@ -880,6 +880,9 @@ static esp_err_t web_api_todo_get(httpd_req_t *req)
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "text", TODO_Text(i));
         cJSON_AddNumberToObject(t, "done", TODO_Done(i));
+        cJSON_AddNumberToObject(t, "remind_en", TODO_RemindEn(i));
+        cJSON_AddNumberToObject(t, "remind_hh", TODO_RemindHH(i));
+        cJSON_AddNumberToObject(t, "remind_mm", TODO_RemindMM(i));
         cJSON_AddItemToArray(arr, t);
     }
     char *out = cJSON_PrintUnformatted(root);
@@ -953,6 +956,24 @@ static esp_err_t web_api_todo_post(httpd_req_t *req)
     else if (strcmp(op->valuestring, "clear") == 0)
     {
         TODO_Clear();
+    }
+    else if (strcmp(op->valuestring, "remind") == 0)
+    {
+        cJSON *en = cJSON_GetObjectItem(root, "en");
+        cJSON *hh = cJSON_GetObjectItem(root, "hh");
+        cJSON *mm = cJSON_GetObjectItem(root, "mm");
+        idx = cJSON_GetObjectItem(root, "idx");
+        if (!idx || !cJSON_IsNumber(idx) || idx->valueint < 0 || idx->valueint >= TODO_Count() ||
+            !en || !cJSON_IsNumber(en) || (en->valueint != 0 && en->valueint != 1) ||
+            !hh || !cJSON_IsNumber(hh) || hh->valueint < 0 || hh->valueint > 23 ||
+            !mm || !cJSON_IsNumber(mm) || mm->valueint < 0 || mm->valueint > 59)
+        {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad remind");
+            return ESP_OK;
+        }
+        TODO_SetRemind((uint8_t)idx->valueint, (uint8_t)en->valueint,
+                       (uint8_t)hh->valueint, (uint8_t)mm->valueint);
     }
     else
     {

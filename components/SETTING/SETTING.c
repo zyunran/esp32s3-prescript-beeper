@@ -27,6 +27,7 @@ static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
 static uint8_t  set_oracle_n = 3;
 static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
+static uint8_t  set_theme = 0;              /* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑白 */
 static uint32_t set_boot_count = 0;         /* 开机次数(NVS "info") */
 
 static const uint16_t set_timeout_opt[] = { 30, 60, 300, 0 };
@@ -49,6 +50,8 @@ static const char *set_oracle_win_name[] = { "白天", "全天", "晚上", "凌�
 #define SET_ORACLE_WIN_N (sizeof(set_oracle_win_opt) / sizeof(set_oracle_win_opt[0]))
 
 static const char *set_cursor_name[] = { "白线", "白块", "角框" };
+static const char *set_theme_name[] = { "柔和绿", "赛博青", "深夜黑" };
+#define SET_THEME_N (sizeof(set_theme_name) / sizeof(set_theme_name[0]))
 static const char *set_key_sound_name[] = { "关", "蜂鸣", "音频", "双" };
 #define SET_KEY_SOUND_N (sizeof(set_key_sound_name) / sizeof(set_key_sound_name[0]))
 
@@ -68,6 +71,7 @@ static void settings_save(void)
         nvs_set_u8(h, "on", set_oracle_n);
         nvs_set_u8(h, "ow", set_oracle_win);
         nvs_set_u8(h, "cur", set_cursor);
+        nvs_set_u8(h, "thm", set_theme);
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "settings nvs commit failed");
         nvs_close(h);
     }
@@ -86,6 +90,7 @@ void SET_Init(void)
         nvs_get_u8(h, "on", &set_oracle_n);
         nvs_get_u8(h, "ow", &set_oracle_win);
         nvs_get_u8(h, "cur", &set_cursor);
+        nvs_get_u8(h, "thm", &set_theme);
         nvs_close(h);
     }
     /* NVS 载入后范围钳位(防损坏/手改越界: to 用选项集合, on/ow 用作数组上限/索引, 见 SET_OracleN/WinRange) */
@@ -104,6 +109,8 @@ void SET_Init(void)
     set_shake = set_shake ? 1 : 0;
     if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 2;
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
+    if (set_theme >= SET_THEME_N) set_theme = 0;
+    UI_SetThemePreset(set_theme);   /* 应用已保存主题预设(持久化到 NVS "cfg") */
     BUZZER_SetEnable(set_beep);
     SOUND_SetVolume(set_vol);
     MPU_SetShake(set_shake);
@@ -241,6 +248,8 @@ static void settings_items_refresh(void)
              "破译字 %dpx", INS_Font() == 3 ? 64 : 16 + INS_Font() * 8);
     snprintf(settings_buf[SET_IDX_CURSOR], sizeof(settings_buf[0]),
              "光标 %s", set_cursor_name[set_cursor]);
+    snprintf(settings_buf[SET_IDX_THEME], sizeof(settings_buf[0]),
+             "主题 %s", set_theme_name[set_theme]);
     strcpy(settings_buf[SET_IDX_EXIT], "退出");
     for (i = 0; i < SET_IDX_COUNT; i++)
     {
@@ -342,6 +351,15 @@ void SET_SubmenuSelect(uint8_t sel)
         snprintf(settings_buf[SET_IDX_CURSOR], sizeof(settings_buf[0]),
                  "光标 %s", set_cursor_name[set_cursor]);
         UI_SubMenuSetItem(SET_IDX_CURSOR, settings_buf[SET_IDX_CURSOR]);
+    }
+    else if (sel == SET_IDX_THEME)   /* 主题预设: 柔和绿/赛博青/深夜黑 循环 */
+    {
+        set_theme = (uint8_t)((set_theme + 1) % SET_THEME_N);
+        UI_SetThemePreset(set_theme);
+        settings_save();
+        snprintf(settings_buf[SET_IDX_THEME], sizeof(settings_buf[0]),
+                 "主题 %s", set_theme_name[set_theme]);
+        UI_SubMenuSetItem(SET_IDX_THEME, settings_buf[SET_IDX_THEME]);
     }
     /* SET_IDX_INFO(系统信息) 由 main.c 处理: 显示全屏信息页 */
 }

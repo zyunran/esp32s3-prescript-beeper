@@ -1168,6 +1168,38 @@ uint8_t UI_GetCursorStyle(void)
     return ui_cursor_style;
 }
 
+/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑白; 写入 NVS "cfg"(与网页主题色同源) */
+static const uint16_t ui_theme_presets[THEME_PRESET_N][6] = {
+    { THEME0_BG, THEME0_MENU, THEME0_FRAME, THEME0_ICON, THEME0_TIME, THEME0_DATE },
+    { THEME1_BG, THEME1_MENU, THEME1_FRAME, THEME1_ICON, THEME1_TIME, THEME1_DATE },
+    { THEME2_BG, THEME2_MENU, THEME2_FRAME, THEME2_ICON, THEME2_TIME, THEME2_DATE },
+};
+
+void UI_SetThemePreset(uint8_t idx)
+{
+    if (idx >= THEME_PRESET_N) idx = 0;
+    UI_COLOR_BG     = ui_theme_presets[idx][0];
+    UI_COLOR_MENU   = ui_theme_presets[idx][1];
+    UI_COLOR_FRAME  = ui_theme_presets[idx][2];
+    UI_COLOR_ICON   = ui_theme_presets[idx][3];
+    UI_COLOR_TIME   = ui_theme_presets[idx][4];
+    UI_COLOR_DATE   = ui_theme_presets[idx][5];
+
+    nvs_handle_t h;
+    if (nvs_open("cfg", NVS_READWRITE, &h) == ESP_OK)
+    {
+        nvs_set_u16(h, "bg",    UI_COLOR_BG);
+        nvs_set_u16(h, "menu",  UI_COLOR_MENU);
+        nvs_set_u16(h, "frame", UI_COLOR_FRAME);
+        nvs_set_u16(h, "icon",  UI_COLOR_ICON);
+        nvs_set_u16(h, "time",  UI_COLOR_TIME);
+        nvs_set_u16(h, "date",  UI_COLOR_DATE);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    UI_RenderScreen();
+}
+
 /* ================= 对外接口 ================= */
 
 void UI_Init(void)

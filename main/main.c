@@ -788,6 +788,14 @@ static void ui_task(void *arg)
                 ui_push(ST_INS);
                 PWR_Wake(now);
             }
+            if (TODO_RemindDue())  /* 有待办提醒到点: 亮屏+蜂鸣+乱码显示待办 */
+            {
+                ui_to_main();
+                INS_Show(TODO_RemindText());
+                ui_push(ST_INS);
+                BUZZER_Beep(3);
+                PWR_Wake(now);
+            }
         }
 
         /* 屏亮 20ms 快速响应按键; 屏灭 200ms 慢轮询省电(走秒用 esp_timer 不依赖此轮询, 倒计时到点误差≤200ms) */

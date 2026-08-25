@@ -13,6 +13,7 @@
 #include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 #define TODO_MAX   12          /* 最大待办条数(UI 子菜单最多 12 项+退出) */
 #define TODO_TEXT_MAX_W 244    /* 列表文本最大宽 px(284 屏宽 - "PASS " 前缀 40px - 余量; 保证整项不出屏且 UTF-8 截断不切字) */
@@ -20,7 +21,11 @@
 typedef struct {
     char text[TODO_TEXT_MAX];  /* 待办文本 */
     uint8_t done;              /* 1=已PASS */
-    uint32_t created;          /* 创建时刻(ms). 保留占位: 与 NVS 旧 blob 布局兼容(删掉会使旧数据读不回), 未来展示用 */
+    uint32_t created;          /* 创建时刻(ms). 保留占位: 与 NVS 旧 blob 布局兼容 */
+    uint8_t remind_en;         /* 1=启用提醒 */
+    uint8_t remind_hh;         /* 提醒小时 0-23 */
+    uint8_t remind_mm;         /* 提醒分钟 0-59 */
+    char remind_date[8];       /* 上次提醒日期 "MM-DD", 同一天不重复提醒 */
 } todo_item_t;
 
 static todo_item_t todo[TODO_MAX];
@@ -34,6 +39,7 @@ static void todo_lock(void)   { if (todo_mux) xSemaphoreTakeRecursive(todo_mux, 
 static void todo_unlock(void) { if (todo_mux) xSemaphoreGiveRecursive(todo_mux); }
 
 /* 列表项显示缓冲(含 PASS 前缀, 按像素宽截断, 防出屏) */
+static char todo_remind_text[TODO_TEXT_MAX];  /* 当前到点提醒文本快照 */
 static char todo_items[TODO_MAX + 1][64];
 static const char *todo_item_p[TODO_MAX + 1];
 
@@ -70,7 +76,11 @@ void TODO_Init(void)
     memset(todo, 0, sizeof(todo));
     if (nvs_open("todo", NVS_READONLY, &h) == ESP_OK)
     {
-        nvs_get_blob(h, "todo", todo, &sz);
+        if (nvs_get_blob(h, "todo", todo, &sz) == ESP_OK && sz < sizeof(todo))
+        {
+            /* 旧版本 blob 较小: 新字段(提醒)置零, 保留旧数据 */
+            memset((uint8_t *)todo + sz, 0, sizeof(todo) - sz);
+        }
         nvs_close(h);
     }
 }
@@ -268,4 +278,87 @@ const char *TODO_CurText(void)
     r = (cur < todo_count()) ? todo[cur].text : NULL;
     todo_unlock();
     return r;   /* 立即使用(锁已释放), 与 TODO_Text 同约束 */
+}
+
+/* ================= 待办提醒时间(每天一次) ================= */
+void TODO_SetRemind(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm)
+{
+    todo_lock();
+    if (i < todo_count())
+    {
+        todo[i].remind_en = en ? 1 : 0;
+        todo[i].remind_hh = (hh > 23) ? 0 : hh;
+        todo[i].remind_mm = (mm > 59) ? 0 : mm;
+        todo[i].remind_date[0] = '\0';
+        todo_save();
+    }
+    todo_unlock();
+}
+
+uint8_t TODO_RemindEn(uint8_t i)
+{
+    uint8_t r = 0;
+    todo_lock();
+    if (i < todo_count()) r = todo[i].remind_en;
+    todo_unlock();
+    return r;
+}
+
+uint8_t TODO_RemindHH(uint8_t i)
+{
+    uint8_t r = 0;
+    todo_lock();
+    if (i < todo_count()) r = todo[i].remind_hh;
+    todo_unlock();
+    return r;
+}
+
+uint8_t TODO_RemindMM(uint8_t i)
+{
+    uint8_t r = 0;
+    todo_lock();
+    if (i < todo_count()) r = todo[i].remind_mm;
+    todo_unlock();
+    return r;
+}
+
+/* 每秒检查: 有待办启用提醒且当前时:分匹配、当天未提醒过 -> 置当天日期并返回 1 */
+uint8_t TODO_RemindDue(void)
+{
+    time_t now = time(NULL);
+    struct tm tmv;
+    char today[8];
+    uint8_t mon, day;
+    uint8_t i, n, due = 0;
+
+    if (!localtime_r(&now, &tmv)) return 0;
+    mon = (uint8_t)(tmv.tm_mon + 1);
+    day = (uint8_t)tmv.tm_mday;
+    snprintf(today, sizeof(today), "%02u-%02u", (unsigned)mon, (unsigned)day);
+
+    todo_lock();
+    n = todo_count();
+    for (i = 0; i < n; i++)
+    {
+        if (!todo[i].text[0] || !todo[i].remind_en) continue;
+        if (todo[i].remind_hh == (uint8_t)tmv.tm_hour &&
+            todo[i].remind_mm == (uint8_t)tmv.tm_min &&
+            strcmp(todo[i].remind_date, today) != 0)
+        {
+            strncpy(todo[i].remind_date, today, sizeof(todo[i].remind_date) - 1);
+            todo[i].remind_date[sizeof(todo[i].remind_date) - 1] = '\0';
+            strncpy(todo_remind_text, todo[i].text, TODO_TEXT_MAX - 1);
+            todo_remind_text[TODO_TEXT_MAX - 1] = '\0';
+            todo_save();
+            due = 1;
+            break;
+        }
+    }
+    todo_unlock();
+    return due;
+}
+
+const char *TODO_RemindText(void)
+{
+    return todo_remind_text;
 }

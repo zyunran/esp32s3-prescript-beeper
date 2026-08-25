@@ -159,6 +159,8 @@ void UI_ScrBlit(void);                       /* 整屏刷到 LCD */
  * 任意界面持续生效; 再进织机→纺织记忆 关闭恢复. */
 void UI_BoxModeSet(uint8_t on);    /* 1=开白框滤镜, 0=关闭恢复正常 */
 uint8_t UI_BoxModeGet(void);       /* 当前白框滤镜状态 */
+/* 主题预设一键切换: 0=柔和绿 1=赛博青 2=深夜黑白; 会持久化到 NVS "cfg" */
+void UI_SetThemePreset(uint8_t idx);
 void UI_RenderScreen(void);                  /* 重绘完整界面(左图标+右菜单), 破译退出后调用 */
 void UI_TimeSet(const char *date, const char *time, const char *week); /* 主页面左侧显示日期+星期+时间(内容变化才重绘; week="周X", 无时间传"--") */
 void UI_WeatherSet(const char *weather);             /* 主页面时钟下方显示天气(变化才重绘, NULL=清除) */
