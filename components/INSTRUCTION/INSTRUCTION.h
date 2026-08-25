@@ -35,9 +35,9 @@ void INS_GetParams(uint16_t *def, uint16_t *gb, uint16_t *dl, uint16_t *rv);  /*
 void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv);      /* 破译参数写(WEB) */
 uint8_t INS_Font(void);                  /* 破译字号: 0=16 1=24 2=32 3=64px */
 void INS_SetFont(uint8_t f);             /* 设破译字号并保存(NVS "ins2"/"fnt"; 64px 自动切换 Limbus 指令库) */
-/* 指令库(WEB 配置): 取当前列表 / 用 '\n' 分隔文本重建并持久化 */
-const char *const *INS_Presets(uint8_t *count);
-uint8_t INS_PresetsFromText(const char *text);   /* 重建并持久化; 1=成功 0=失败(已回滚到上次持久化) */
+/* 指令库(WEB 配置): 读指定字号到调用方缓冲 / 用换行分隔文本重建并持久化 */
+uint8_t INS_PresetsEx(uint8_t font, char out[][INS_PRESET_LEN], uint8_t max_out, uint8_t *count); /* 读指定字号指令库到调用方缓冲: font=3 读64, 其余普通 */
+uint8_t INS_PresetsFromTextEx(uint8_t font, const char *text);      /* 保存指定字号指令库(换行文本) */
 void INS_Tick(void);                    /* 推进动画 + 蜂鸣, 每主循环调用一次 */
 uint8_t INS_Finished(void);             /* 1=本次破译已完成(全文已显示) */
 void INS_Exit(void);                    /* 提前退出破译, 回到 UI 主界面 */

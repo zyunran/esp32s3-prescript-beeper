@@ -28,8 +28,10 @@ static uint32_t phase_total(void)
 /* 剩余秒(int64 防下溢/回绕; 含暂停补偿) */
 static int64_t remain_s(void)
 {
-    int64_t used = (int64_t)(p_now() - start_ms) + pause_acc;
-    if (pause_at) used += (int64_t)(p_now() - pause_at);
+    /* 已用时间 = 累计运行时间 - 已暂停累计;
+     * 当前正在暂停时冻结在 pause_at 时刻, 不再把暂停时段算入已用. */
+    int64_t anchor = pause_at ? (int64_t)pause_at : (int64_t)p_now();
+    int64_t used = anchor - (int64_t)start_ms - pause_acc;
     int64_t r = ((int64_t)phase_total() - used + 999) / 1000;
     return r < 0 ? 0 : r;
 }

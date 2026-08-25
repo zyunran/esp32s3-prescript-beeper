@@ -833,6 +833,17 @@ static void ui_task(void *arg)
             }
             if (r == TIM_EXIT) ui_pop();      /* 完成/退出回 TTL 子菜单 */
         }
+/* 番茄钟: 与倒计时一致, 无论亮屏与否都推进; 阶段到点蜂鸣+亮屏 */
+        if (ui_state == ST_POMO)
+        {
+            pom_ret_t pr = POM_Tick(PWR_ScreenOn());
+            if (pr == POM_DONE)
+            {
+                BUZZER_Beep(2);
+                PWR_Wake(now);   /* 工作/休息阶段切换: 亮屏提示 */
+            }
+            if (pr == POM_EXIT) ui_pop();     /* 防御: 退出回 TTL 子菜单 */
+        }
 
         if (PWR_ScreenOn())
         {
@@ -862,6 +873,19 @@ static void ui_task(void *arg)
                     {
                         WEB_ConfigDirtyClear();
                         ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
+                    }
+                    else if (ui_state == ST_SUB)
+                    {
+                        WEB_ConfigDirtyClear();
+                        if (ui_menu_cfg[sub_kind].fn == UI_FN_SETTING)
+                        {
+                            SET_SubmenuEnter();   /* 设置项文字含当前值: 网页改动后刷新标签 */
+                            UI_SubMenuSetCur(UI_SubMenuCur());
+                        }
+                        else
+                        {
+                            UI_SubMenuSetCur(UI_SubMenuCur());   /* 网页改了主题/颜色: 就地重绘当前子菜单 */
+                        }
                     }
                 }
             }
@@ -1039,6 +1063,7 @@ void app_main(void)
     MPU_Init();   /* MPU6050 六轴初始化(软件I2C, 无传感器则后台重试) */
     GACHA_Init(); /* 创建抽卡/图鉴跨任务互斥量(须在 WEB_Init 启动 httpd 之前, 避免绘图请求撞上 mux=NULL) */
     WEB_Init();   /* 启动配置页(联网后访问 http://<ip>/) */
+    UI_RenderScreen();   /* WEB_Init 已加载持久化主题色: 应用后重绘一次 */
 
     key_q = xQueueCreate(8, sizeof(uint8_t));
     MPU_Start(key_q);          /* 启动六轴采样任务(摇动->按键事件入队) */

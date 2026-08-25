@@ -416,6 +416,17 @@ void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, ui
     alm_unlock();
 }
 
+void ALM_ClearSlot(uint8_t i)
+{
+    alm_lock();
+    if (i < ALM_MAX && alm[i].days != 0)
+    {
+        memset(&alm[i], 0, sizeof(alm[0]));
+        alm_save();
+    }
+    alm_unlock();
+}
+
 void ALM_Enter(void)
 {
     alm_busy = 1;

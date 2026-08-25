@@ -23,10 +23,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-static const char *TAG = "INS";
 
-/* 指令库/破译参数跨任务互斥(清单 M4): WEB 任务写(INS_PresetsFromText/SetParams/SetFont),
- * ui_task 读(INS_Presets/ShowRandom/ShowByIndex/破译解析). INS_Init 创建递归互斥量. */
+/* 指令库/破译参数跨任务互斥(清单 M4): WEB 任务写(INS_PresetsFromTextEx/SetParams/SetFont),
+ * ui_task 读(INS_PresetsEx/ShowRandom/ShowByIndex/破译解析). INS_Init 创建递归互斥量. */
 static SemaphoreHandle_t ins_mux = NULL;
 static void ins_lock(void)   { if (ins_mux) xSemaphoreTakeRecursive(ins_mux, portMAX_DELAY); }
 static void ins_unlock(void) { if (ins_mux) xSemaphoreGiveRecursive(ins_mux); }
@@ -770,29 +769,81 @@ static void ins_presets_load(void)
     }
 }
 
-/* ================= 指令库对外接口(WEB 配置用) ================= */
+/* ================= 网页分别读写普通/64 指令库 ================= */
+static char ins_save_view[INS_PRESET_MAX][INS_PRESET_LEN];   /* 保存用独立缓冲(读取接口直接写入调用方缓冲) */
 
-/* 返回运行期指令库指针与条数(WEB 用); 二维数组转指针数组, 避免把字符串头当指针 */
-const char *const *INS_Presets(uint8_t *count)
+/* 读取指定字号的指令库到调用方提供的缓冲;
+ * 全程持有 ins_lock, 返回后缓冲归调用方所有, 不存在共享指针被并发覆盖问题. */
+uint8_t INS_PresetsEx(uint8_t font, char out[][INS_PRESET_LEN], uint8_t max_out, uint8_t *count)
 {
-    static const char *ptrs[INS_PRESET_MAX];
-    uint8_t i;
-    ins_lock();
-    *count = ins_preset_count;
-    for (i = 0; i < ins_preset_count; i++)
+    nvs_handle_t h;
+    size_t sz = 0;
+    char *buf = NULL;
+    const char *key = (font == 3) ? "presets64" : "presets";
+    const char *const *defs = (font == 3) ? ins_defaults_limbus : ins_defaults;
+    uint8_t def_cnt = (uint8_t)((font == 3) ? INS_DEFAULT_LIMBUS_COUNT : INS_DEFAULT_COUNT);
+    uint8_t n = 0;
+
+    if (!out || !count || max_out == 0)
     {
-        ptrs[i] = ins_presets[i];
+        if (count) *count = 0;
+        return 0;
     }
+
+    ins_lock();
+    if (nvs_open("ins", NVS_READONLY, &h) == ESP_OK)
+    {
+        if (nvs_get_blob(h, key, NULL, &sz) == ESP_OK && sz > 0 && sz <= 8192)
+        {
+            buf = malloc(sz + 1);
+            if (buf && nvs_get_blob(h, key, buf, &sz) == ESP_OK)
+            {
+                buf[sz] = '\0';
+                char *p = buf, *nl;
+                while (*p && n < max_out)
+                {
+                    nl = strchr(p, '\n');
+                    if (nl) *nl = '\0';
+                    strncpy(out[n], p, INS_PRESET_LEN - 1);
+                    out[n][INS_PRESET_LEN - 1] = '\0';
+                    if (out[n][0]) n++;
+                    if (!nl) break;
+                    p = nl + 1;
+                }
+            }
+        }
+        if (buf) free(buf);
+        nvs_close(h);
+    }
+    if (n == 0)
+    {
+        uint8_t i;
+        uint8_t m = (def_cnt < max_out) ? def_cnt : max_out;
+        for (i = 0; i < m; i++)
+        {
+            strncpy(out[i], defs[i], INS_PRESET_LEN - 1);
+            out[i][INS_PRESET_LEN - 1] = '\0';
+        }
+        n = m;
+    }
+    *count = n;
     ins_unlock();
-    return ptrs;   /* 注意: 返回的指针表是静态复用缓冲, 下次调用 INS_Presets 会被重写 —— 仅本次调用内有效 */
+    return 1;
 }
 
-/* 用 '\n' 分隔文本重建指令库并持久化(WEB 保存); 返回 1=已落盘, 0=失败(内存已回滚到上次持久化状态) */
-uint8_t INS_PresetsFromText(const char *text)
+/* 保存指定字号的指令库; text 为换行分隔文本。
+ * 使用独立 ins_save_view 缓冲，并与读取接口共用 ins_lock 串行化；
+ * 若保存的字号正是当前运行字号，则同步刷新内存运行库，网页保存后立即生效。 */
+uint8_t INS_PresetsFromTextEx(uint8_t font, const char *text)
 {
     const char *p = text, *nl;
-    uint8_t n = 0;
-    ins_lock();                                   /* 重建期间屏蔽 UI 读取(ShowRandom/ShowByIndex) */
+    uint8_t n = 0, i, ok = 1;
+    char *buf;
+    size_t total = 1, o = 0;
+    nvs_handle_t h;
+    const char *key = (font == 3) ? "presets64" : "presets";
+
+    ins_lock();
     while (*p && n < INS_PRESET_MAX)
     {
         size_t len;
@@ -801,61 +852,42 @@ uint8_t INS_PresetsFromText(const char *text)
         if (len > INS_PRESET_LEN - 1) len = INS_PRESET_LEN - 1;
         if (len > 0)
         {
-            memcpy(ins_presets[n], p, len);
-            ins_presets[n][len] = '\0';
+            memcpy(ins_save_view[n], p, len);
+            ins_save_view[n][len] = '\0';
             n++;
         }
         if (!nl) break;
         p = nl + 1;
     }
-    ins_preset_count = n;
-
-    /* 落盘失败(内存不足/NVS 满/分区异常)时回滚内存到上次持久化内容, 让网页明确收到保存失败 */
+    for (i = 0; i < n; i++) total += strlen(ins_save_view[i]) + 1;
+    buf = malloc(total);
+    if (!buf)
     {
-        size_t total = 1, o = 0;
-        uint8_t i, ok = 1;
-        char *buf;
-        for (i = 0; i < ins_preset_count; i++) total += strlen(ins_presets[i]) + 1;
-        buf = malloc(total);
-        if (!buf)
-        {
-            ESP_LOGE(TAG, "presets save OOM(%u), rollback", (unsigned)total);
-            ok = 0;
-        }
-        else
-        {
-            for (i = 0; i < ins_preset_count; i++)
-            {
-                size_t l = strlen(ins_presets[i]);
-                memcpy(buf + o, ins_presets[i], l); o += l;
-                buf[o++] = '\n';
-            }
-            nvs_handle_t h;
-            if (nvs_open("ins", NVS_READWRITE, &h) != ESP_OK)
-            {
-                ESP_LOGE(TAG, "presets NVS open failed, rollback");
-                ok = 0;
-            }
-            else
-            {
-                if (nvs_set_blob(h, ins_presets_key(), buf, o) != ESP_OK || nvs_commit(h) != ESP_OK)
-                {
-                    ESP_LOGE(TAG, "presets NVS write failed, rollback");
-                    ok = 0;
-                }
-                nvs_close(h);
-            }
-            free(buf);
-        }
-        if (!ok)
-        {
-            ins_presets_load();   /* 内存回滚: 恢复上次持久化内容(NVS 无则内置默认) */
-            ins_unlock();
-            return 0;
-        }
+        ins_unlock();
+        return 0;
+    }
+    for (i = 0; i < n; i++)
+    {
+        size_t l = strlen(ins_save_view[i]);
+        memcpy(buf + o, ins_save_view[i], l); o += l;
+        buf[o++] = '\n';
+    }
+    if (nvs_open("ins", NVS_READWRITE, &h) != ESP_OK)
+    {
+        free(buf);
+        ins_unlock();
+        return 0;
+    }
+    if (nvs_set_blob(h, key, buf, o) != ESP_OK || nvs_commit(h) != ESP_OK) ok = 0;
+    nvs_close(h);
+    free(buf);
+
+    if (ok && font == ins_font)
+    {
+        ins_presets_load();   /* 当前字号库被网页保存: 立即刷新运行期指令库 */
     }
     ins_unlock();
-    return 1;
+    return ok;
 }
 
 void INS_Show(const char *text)

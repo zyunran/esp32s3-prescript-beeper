@@ -110,7 +110,8 @@ void SET_Init(void)
     if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 2;
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
     if (set_theme >= SET_THEME_N) set_theme = 0;
-    UI_SetThemePreset(set_theme);   /* 应用已保存主题预设(持久化到 NVS "cfg") */
+    /* 不再在此处调用 UI_SetThemePreset(): 它会把 NVS "cfg" 里的自定义颜色覆盖成主题预设色。
+     * 已保存的主题色/自定义色由 WEB_Init -> web_colors_load() 统一加载，之后 app_main 再重绘。 */
     BUZZER_SetEnable(set_beep);
     SOUND_SetVolume(set_vol);
     MPU_SetShake(set_shake);
@@ -160,6 +161,17 @@ void SET_SetKeySound(uint8_t v)
 {
     if (v >= SET_KEY_SOUND_N) v = 2;
     set_key_sound = v;
+    settings_save();
+}
+
+/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 */
+uint8_t SET_Theme(void) { return set_theme; }
+
+void SET_SetTheme(uint8_t idx)
+{
+    if (idx >= SET_THEME_N) idx = 0;
+    set_theme = idx;
+    UI_SetThemePreset(set_theme);
     settings_save();
 }
 

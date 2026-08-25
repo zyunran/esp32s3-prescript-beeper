@@ -1197,7 +1197,8 @@ void UI_SetThemePreset(uint8_t idx)
         nvs_commit(h);
         nvs_close(h);
     }
-    UI_RenderScreen();
+    /* 注意: 这里不再直接重绘。UI_RenderScreen 只能由 ui_task(app_main 启动前除外)调用，
+     * 网页保存主题从 httpd 任务触发时不能碰 LCD；由 WEB_ConfigDirty -> ui_task 统一重绘。 */
 }
 
 /* ================= 对外接口 ================= */

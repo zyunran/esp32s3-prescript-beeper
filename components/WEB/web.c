@@ -180,7 +180,7 @@ static int web_ins_text_valid(const char *s)
 }
 
 /* ================= 配置页(内嵌 HTML, 面向小白: 状态栏/分组/快捷配色) ================= */
-const char web_page[];   /* 页面 HTML 本体在 web_page.c(纯常量, 与逻辑分离) */
+extern const char web_page[];   /* 页面 HTML 本体在 web_page.c(纯常量, 与逻辑分离) */
 
 /* ================= API 处理 ================= */
 
@@ -188,6 +188,7 @@ static esp_err_t web_handler_root(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期: 网页活动=联网会话活跃, 防空闲自动断误判(路径1) */
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, web_page, HTTPD_RESP_USE_STRLEN);
 }
 
@@ -210,13 +211,29 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
     cJSON_AddItemToObject(root, "colors", colors);
 
     {
-        const char *const *pres = INS_Presets(&n);
-        for (i = 0; i < n; i++)
+        char ins_buf[INS_PRESET_MAX][INS_PRESET_LEN];
+        if (INS_PresetsEx(0, ins_buf, INS_PRESET_MAX, &n))   /* 普通指令库(始终读普通, 不随字号变) */
         {
-            cJSON_AddItemToArray(ins, cJSON_CreateString(pres[i]));
+            for (i = 0; i < n; i++)
+            {
+                cJSON_AddItemToArray(ins, cJSON_CreateString(ins_buf[i]));
+            }
         }
     }
     cJSON_AddItemToObject(root, "ins", ins);
+
+    {
+        cJSON *ins64 = cJSON_CreateArray();
+        char ins64_buf[INS_PRESET_MAX][INS_PRESET_LEN];
+        if (INS_PresetsEx(3, ins64_buf, INS_PRESET_MAX, &n))   /* 64 大字指令库 */
+        {
+            for (i = 0; i < n; i++)
+            {
+                cJSON_AddItemToArray(ins64, cJSON_CreateString(ins64_buf[i]));
+            }
+        }
+        cJSON_AddItemToObject(root, "ins64", ins64);
+    }
 
     /* 答案之书自定义答案(每类一行一条, 内置答案固定不可改) */
     {
@@ -233,8 +250,11 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         for (i = 0; i < max; i++)
         {
             uint8_t en, hh, mm, days, once;
-            cJSON *a = cJSON_CreateObject();
+            cJSON *a;
             ALM_GetSlot(i, &en, &hh, &mm, &days, &once);
+            if (days == 0) continue;   /* 从未设置的槽不显示; 已设置但关闭(en=0)仍显示可恢复 */
+            a = cJSON_CreateObject();
+            cJSON_AddNumberToObject(a, "idx", i);
             cJSON_AddNumberToObject(a, "en", en);
             cJSON_AddNumberToObject(a, "hh", hh);
             cJSON_AddNumberToObject(a, "mm", mm);
@@ -269,6 +289,7 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddNumberToObject(root, "oracle_n", SET_OracleN());
         cJSON_AddNumberToObject(root, "oracle_win", SET_OracleWin());
         cJSON_AddNumberToObject(root, "cursor", UI_GetCursorStyle());
+        cJSON_AddNumberToObject(root, "theme", SET_Theme());
         cJSON *status = cJSON_CreateObject();
         cJSON_AddNumberToObject(status, "wifi", NET_WifiOk() ? 1 : 0);
         {
@@ -341,7 +362,7 @@ static int web_apply_ins(cJSON *root)
     cJSON *ins = cJSON_GetObjectItem(root, "ins");
     if (!ins) return 1;
     if (!cJSON_IsString(ins) || !web_ins_text_valid(ins->valuestring)) return 0;
-    if (!INS_PresetsFromText(ins->valuestring)) return 0;   /* 落盘失败: 整体保存按失败处理 */
+    if (!INS_PresetsFromTextEx(0, ins->valuestring)) return 0;   /* 普通指令库 */
     return 1;
 }
 
@@ -368,6 +389,15 @@ static int web_ans_text_valid(const char *s)
     return 1;
 }
 
+static int web_apply_ins64(cJSON *root)
+{
+    cJSON *ins64 = cJSON_GetObjectItem(root, "ins64");
+    if (!ins64) return 1;
+    if (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring)) return 0;
+    if (!INS_PresetsFromTextEx(3, ins64->valuestring)) return 0;
+    return 1;
+}
+
 static int web_apply_ans(cJSON *root)
 {
     cJSON *ans = cJSON_GetObjectItem(root, "ans");
@@ -388,45 +418,75 @@ static int web_apply_ans(cJSON *root)
 static int web_apply_alarms(cJSON *root)
 {
     cJSON *alarms = cJSON_GetObjectItem(root, "alarms");
-    int n;
-    uint8_t max, i;
+    int n, max_i;
+    uint8_t max, i, used[16];
     if (!alarms) return 1;
     if (!cJSON_IsArray(alarms)) return 0;
     n = cJSON_GetArraySize(alarms);
     max = ALM_Max();
-    if (n < 0 || n > max) return 0;
+    max_i = max;
+    if (n < 0 || n > max_i) return 0;
+    memset(used, 0, sizeof(used));
+
     for (i = 0; i < (uint8_t)n; i++)
     {
         cJSON *a = cJSON_GetArrayItem(alarms, i);
+        cJSON *idx, *en, *hh, *mm, *days, *once;
         if (!cJSON_IsObject(a)) return 0;
-        cJSON *en = cJSON_GetObjectItem(a, "en");
-        cJSON *hh = cJSON_GetObjectItem(a, "hh");
-        cJSON *mm = cJSON_GetObjectItem(a, "mm");
-        cJSON *days = cJSON_GetObjectItem(a, "days");
-        cJSON *once = cJSON_GetObjectItem(a, "once");
+        idx = cJSON_GetObjectItem(a, "idx");
+        en = cJSON_GetObjectItem(a, "en");
+        hh = cJSON_GetObjectItem(a, "hh");
+        mm = cJSON_GetObjectItem(a, "mm");
+        days = cJSON_GetObjectItem(a, "days");
+        once = cJSON_GetObjectItem(a, "once");
         if (!cJSON_IsNumber(en) || !cJSON_IsNumber(hh) || !cJSON_IsNumber(mm)) return 0;
         if ((en->valueint != 0 && en->valueint != 1) ||
             hh->valueint < 0 || hh->valueint > 23 ||
             mm->valueint < 0 || mm->valueint > 59) return 0;
         if (days && (!cJSON_IsNumber(days) || days->valueint < 0 || days->valueint > 127)) return 0;
         if (once && (!cJSON_IsNumber(once) || (once->valueint != 0 && once->valueint != 1))) return 0;
+        if (idx && (!cJSON_IsNumber(idx) || idx->valueint < 0 || idx->valueint >= max_i)) return 0;
     }
+
     for (i = 0; i < (uint8_t)n; i++)
     {
         cJSON *a = cJSON_GetArrayItem(alarms, i);
+        cJSON *idx = cJSON_GetObjectItem(a, "idx");
         cJSON *en = cJSON_GetObjectItem(a, "en");
         cJSON *hh = cJSON_GetObjectItem(a, "hh");
         cJSON *mm = cJSON_GetObjectItem(a, "mm");
         cJSON *days = cJSON_GetObjectItem(a, "days");
         cJSON *once = cJSON_GetObjectItem(a, "once");
-        ALM_SetSlot(i, (uint8_t)(en->valueint ? 1 : 0),
+        uint8_t slot;
+        if (idx && cJSON_IsNumber(idx))
+        {
+            slot = (uint8_t)idx->valueint;
+        }
+        else
+        {
+            uint8_t en2, hh2, mm2, days2, once2;
+            for (slot = 0; slot < max; slot++)
+            {
+                if (used[slot]) continue;
+                ALM_GetSlot(slot, &en2, &hh2, &mm2, &days2, &once2);
+                if (days2 == 0) break;
+            }
+            if (slot >= max) return 0;
+        }
+        if (used[slot]) return 0;
+        used[slot] = 1;
+        ALM_SetSlot(slot, (uint8_t)(en->valueint ? 1 : 0),
                     (uint8_t)hh->valueint, (uint8_t)mm->valueint,
                     days ? (uint8_t)days->valueint : 0x7F,
                     once ? (uint8_t)(once->valueint ? 1 : 0) : 0);
     }
-    for (i = (uint8_t)n; i < max; i++)   /* 网页只列已设闹钟: 未列出的槽全部关闭 */
+
+    for (i = 0; i < max; i++)
     {
-        ALM_SetSlot(i, 0, 0, 0, 0x7F, 0);
+        uint8_t en2, hh2, mm2, days2, once2;
+        if (used[i]) continue;
+        ALM_GetSlot(i, &en2, &hh2, &mm2, &days2, &once2);
+        if (days2 != 0) ALM_ClearSlot(i);
     }
     return 1;
 }
@@ -504,6 +564,20 @@ static int web_apply_key_sound(cJSON *root)
     if (!ks) return 1;
     if (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3) return 0;
     SET_SetKeySound((uint8_t)ks->valueint);
+    return 1;
+}
+
+static int web_apply_theme(cJSON *root)
+{
+    cJSON *theme = cJSON_GetObjectItem(root, "theme");
+    if (!theme) return 1;
+    if (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= 3) return 0;
+    /* 只有用户真的切换主题预设时才应用预设；
+     * 否则网页每次保存都会用预设色覆盖刚保存的自定义颜色。 */
+    if ((uint8_t)theme->valueint != SET_Theme())
+    {
+        SET_SetTheme((uint8_t)theme->valueint);
+    }
     return 1;
 }
 
@@ -613,14 +687,16 @@ static int web_cfg_validate(cJSON *root)
     if (alarms)
     {
         int n, i;
+        uint8_t used[16] = {0};
         if (!cJSON_IsArray(alarms)) return 0;
         n = cJSON_GetArraySize(alarms);
         if (n < 0 || n > (int)ALM_Max()) return 0;
         for (i = 0; i < n; i++)
         {
             cJSON *a = cJSON_GetArrayItem(alarms, i);
-            cJSON *en, *hh, *mm, *days, *once;
+            cJSON *idx, *en, *hh, *mm, *days, *once;
             if (!cJSON_IsObject(a)) return 0;
+            idx = cJSON_GetObjectItem(a, "idx");
             en = cJSON_GetObjectItem(a, "en");
             hh = cJSON_GetObjectItem(a, "hh");
             mm = cJSON_GetObjectItem(a, "mm");
@@ -632,6 +708,12 @@ static int web_cfg_validate(cJSON *root)
                 mm->valueint < 0 || mm->valueint > 59) return 0;
             if (days && (!cJSON_IsNumber(days) || days->valueint < 0 || days->valueint > 127)) return 0;
             if (once && (!cJSON_IsNumber(once) || (once->valueint != 0 && once->valueint != 1))) return 0;
+            if (idx)
+            {
+                if (!cJSON_IsNumber(idx) || idx->valueint < 0 || idx->valueint >= (int)ALM_Max()) return 0;
+                if (used[idx->valueint]) return 0;
+                used[idx->valueint] = 1;
+            }
         }
     }
     cJSON *wifi = cJSON_GetObjectItem(root, "wifi");
@@ -700,6 +782,10 @@ static int web_cfg_validate(cJSON *root)
     }
     cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
     if (ks && (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3)) return 0;
+    cJSON *ins64 = cJSON_GetObjectItem(root, "ins64");
+    if (ins64 && (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring))) return 0;
+    cJSON *theme = cJSON_GetObjectItem(root, "theme");
+    if (theme && (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= 3)) return 0;
     return 1;
 }
 
@@ -760,7 +846,8 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
     if (!web_apply_colors(root) || !web_apply_ins(root) || !web_apply_ans(root) ||
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||
-        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) || !web_apply_decode(root))
+        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) ||
+        !web_apply_theme(root) || !web_apply_ins64(root) || !web_apply_decode(root))
     {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid field");
@@ -1115,6 +1202,7 @@ static esp_err_t web_captive(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr(req, web_page);
     return ESP_OK;
 }
