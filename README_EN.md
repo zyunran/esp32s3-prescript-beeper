@@ -6,8 +6,20 @@ An ESP32-S3 firmware for a desktop **pager (BB-machine)**-shaped personal termin
 
 - Platform: ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C
 - Flash: 16MB (app partition 4MB, OTA not enabled)
-- Most code is vibe-coded and not stable yet; a refactor is planned
+- Most code is vibe-coded; v1.06 fixes the main stability issues, and refactoring continues
+- Reusable driver library: `D:/STM32Project/Library_SK/my_esp32_lib/esp32oder` (decoupled, with usage docs)
 ---
+
+## v1.06 Changes
+
+- Fixed: Pomodoro timer never ran (`POM_Tick` was not wired into the main loop)
+- Fixed: Pomodoro pause accounting (timer kept running while paused / double-counted after resume)
+- Fixed: web-saved instruction library did not take effect immediately (added independent 64px preset read/write)
+- Fixed: web theme save drew from the HTTP task, risking LCD tearing
+- Fixed: saving before the web page finished loading could clear all alarms
+- Fixed: custom theme colors were lost after reboot
+- Hardened: instruction library read/write concurrency; reads now copy into caller buffers
+- Added: `pomodoro_drv` / `power_drv` reusable drivers (see driver library path above)
 
 ## Features
 
@@ -23,13 +35,13 @@ An ESP32-S3 firmware for a desktop **pager (BB-machine)**-shaped personal termin
 | **Settings** | Screen timeouts / volume / buzzer / shake / oracle / glitch font size / cursor; system info, balance, factory reset |
 | **Network** | Connect to WiFi / start provisioning hotspot / check weather |
 | **Loom** | Easter egg: "Weaving Time" time-acceleration, "Weaving Memory" full-screen white-frame filter |
-| **TTL protocol** | Stopwatch (countdown) / alarm |
+| **TTL protocol** | Countdown / alarm / Pomodoro |
 
 ### Highlights
 
-- **Glitch instruction decoder**: starts as full-screen random noise, then reveals text character by character; supports `{#RRGGBB}` colors, `{RAND:min-max}` random values, `{TODO}` auto-insert into todos; font sizes 16/24/32 px.
+- **Glitch instruction decoder**: starts as full-screen random noise, then reveals text character by character; supports `{#RRGGBB}` colors, `{RAND:min-max}` random values, `{TODO}` auto-insert into todos; font sizes 16/24/32/64 px.
 - **Card gacha (Limbus-style)**: 10-pull scan-line animation, golden-persona voice typewriter, points-based single pull; coin **dice-battle** mini-game with damage points / win streak; collectible album of 12 sinners × 120 personas. (The dice battle still has some issues.)
-- **Time management**: alarms (daily / workdays / weekends / one-shot / custom weekdays), countdown that beeps and wakes the screen when done, scheduled daily oracle push.
+- **Time management**: alarms (daily / workdays / weekends / one-shot / custom weekdays), countdown that beeps and wakes the screen when done, Pomodoro (work/break auto-rotation), scheduled daily oracle push.
 - **Works offline**: DS1302 shows the time immediately at power-up and keeps it on its backup battery when unpowered; every local feature runs without a network.
 - **Light-sleep low power**: 50 ms tick-based light sleep + suspended sampling task + WiFi off; on wake it reconnects in the background and SNTP resyncs right away.
 - **Full web configuration**: WiFi / weather / instruction library / theme / alarms / todos / users / glitch parameters / album — all persisted in NVS and survive reboots.
