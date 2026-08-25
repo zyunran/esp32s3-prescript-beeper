@@ -3,8 +3,8 @@
  *  - ui_task:    收事件按界面状态机驱动, 并推进各功能(破译/抽卡/计时/神谕推送)
  *  - 待机: 息屏后 ui_task 进浅睡眠(50ms tick 查按键/闹钟, STANDBY_TICK_US);
  *    路径1 完全按需联网: 唤醒不再自动重连 WiFi, 联网仅由 联网->连接网络 手动开启(会话内校时/天气)
- * 功能已拆分为组件: UI(菜单/配置) / INSTRUCTION(破译+蜂鸣) / GACHA(抽卡) / NET(联网天气)
- *   / SOUND(音频) / SETTING(设置+NVS) / TIMER(计时/倒计时) / ORACLE(随机神谕推送)
+ * 功能已拆分为组件: UI(菜单/配置+LOOM彩蛋) / INSTRUCTION(破译+蜂鸣+答案) / GACHA(抽卡) / NET(联网天气)
+ *   / AUDIO(蜂鸣+音频) / SETTING(设置+NVS+神谕) / TIMER(倒计时/番茄钟/闹钟)/ POWER(电源+电量)
  * 主菜单标题与子菜单项文字集中配置于 ui_menu_cfg(ui.c), 改那里即可改文字
  */
 #include "freertos/FreeRTOS.h"
@@ -26,6 +26,8 @@
 #include "ANSWER.h"
 #include "LOOM.h"
 #include "POMODORO.h"
+#include "BUZZER.h"
+#include "POWER.h"
 #include "WEB.h"
 #include "MPU6050.h"
 #include "DS1302.h"
@@ -47,9 +49,6 @@
 #define EVT_OK       2
 #define EVT_DOWN     3
 #define EVT_LONG_OK  4    /* OK 长按(返回上一级) */
-#define EVT_FLIP_DOWN 5   /* MPU 扣屏(面朝下保持): 灭屏 */
-#define EVT_RAISE     6   /* MPU 抬腕/翻回: 亮屏 */
-
 /* 长按参数(改这里即可调整手感):
  *   LONG_PRESS_MS  = 判定"长按"的按住时长(超此即长按)
  *   REPEAT_PRESS_MS = 长按连发间隔(上下键按住后每隔此时间滚动一项) */
@@ -87,45 +86,14 @@ typedef struct {
 static ui_frame_t ui_stack[UI_STACK_MAX];
 static uint8_t ui_stack_n = 0;
 
-/* ================= 织机彩蛋(components/LOOM) 胶水 =================
- * 「纺织时间/纺织记忆」逻辑已独立到 LOOM 组件; 主菜单入口已移除,
+/* ================= 织机彩蛋(LOOM, 已并入 UI 组件) 胶水 =================
+ * 「纺织时间/纺织记忆」逻辑在 LOOM(已并入 UI 组件); 主菜单入口已移除,
  * 改为主界面 Konami 手势解锁(摇:上上下下左右左右 / 键:下下上上+OK·LNG·OK·LNG, ST_MAIN 喂 LOOM_Konami).
  * 此处仅保留: 确认动画(MADE IN HEAVEN)定格流程 与 加速时间的显示节流. */
 static uint8_t egg_confirm = 0;       /* 彩蛋确认乱码显示中(播完自动回主界面) */
 static uint32_t egg_hold_t = 0;       /* 确认定格计时 */
 static uint32_t egg_wx_last = 0;      /* 加速态天气随机刷新节流 ms */
 static uint32_t egg_draw_last = 0;    /* 加速态时钟整屏重绘节流 ms */
-
-static uint32_t last_act;   /* 前置声明(定义见下方"待机"区) */
-static uint8_t  scr_on;     /* 暂定声明: 实际定义(=1)在下方待机区 */
-
-/* ================= 扣屏熄屏 / 抬腕亮屏 =================
- * MPU 发 EVT_FLIP_DOWN/EVT_RAISE, 此处统一执行(LCD 单写者约定).
- * flip_wait=扣屏后等待翻回: 期间抑制待机浅睡眠(否则 MPU 挂起无法检测抬腕)与神谕/每日签亮屏推送;
- * 超 FLIP_WAIT_MAX_MS 仍扣着 -> 放行进真待机(省电, 按键可唤醒). */
-#define FLIP_WAIT_MAX_MS 60000u
-static uint8_t flip_wait = 0;
-static uint32_t flip_wait_since = 0;
-
-/* 在 on_event 最前统一拦截翻转事件(全局生效, 不进各界面状态机) */
-static uint8_t evt_flip_handle(uint8_t evt)
-{
-    if (evt == EVT_FLIP_DOWN)
-    {
-        if (scr_on) { lcd_off(); scr_on = 0; }
-        flip_wait = 1;
-        flip_wait_since = (uint32_t)(esp_timer_get_time() / 1000);
-        return 1;
-    }
-    if (evt == EVT_RAISE)
-    {
-        flip_wait = 0;
-        flip_wait_since = 0;
-        if (!scr_on) { lcd_on(); scr_on = 1; last_act = (uint32_t)(esp_timer_get_time() / 1000); }
-        return 1;
-    }
-    return 0;
-}
 
 /* 进入"使用者"子菜单并高亮当前使用者名称(实时反映, 如当前为但丁) */
 static void user_submenu_enter(void)
@@ -341,7 +309,6 @@ static void input_task(void *arg)
 /* ================= 事件处理(按当前界面状态) ================= */
 static void on_event(uint8_t evt)
 {
-    if (evt_flip_handle(evt)) return;   /* 扣屏/抬腕全局事件 */
     switch (ui_state)
     {
         case ST_MAIN:
@@ -667,65 +634,28 @@ static void on_event(uint8_t evt)
     }
 }
 
-/* ================= 待机: 息屏后浅睡眠(省电) =================
- * 息屏(背光灭)后进浅睡眠, CPU 停/RAM 保留/毫秒级唤醒, 系统时间由 RTC 维持不丢.
- * 注: 本板 GPIO 唤醒(EXT1/GPIO wakeup)触发硬件睡眠拒绝(ESP_ERR_SLEEP_REJECT, 实测),
- *     故用「定时器 tick 睡眠」: 每 50ms 睡一片, 醒来查按键/闹钟再睡.
- *     按键响应 ≤50ms; CPU 睡眠期占 >99%, 比全速运行省电数倍.
- * 待机关 WiFi(最省电); 路径1 唤醒后也不再自动重连(按需联网), 校时在联网会话内完成.
- * 白屏防护: 睡眠期间 LCD 的 CS/RST/DC 保持输出高(lcd_sleep_hold), 防屏复位/吃毛刺. */
-#define STANDBY_TICK_US  50000ULL    /* 定时唤醒片长: 50ms(按键响应≤50ms, 与功耗折中; 原200ms唤醒偏慢) */
-
-static uint32_t last_act;   /* 距上次操作时刻(ms), 提为全局供待机唤醒处理 */
-static uint32_t standby_reenter_at = 0;   /* 按键唤醒后的待机冷却截止时刻(防按住时反复进退待机空转) */
-static uint8_t  scr_on = 1; /* 屏幕背光状态(1=亮) */
-
-/* 任一按键按下(低电平) */
-static uint8_t standby_btn_pressed(void)
+/* ================= 电源宿主回调(POWER 组件 pwr_host_t 实现) ================= */
+static void stby_net_stop(void)
+{
+    net_conn_pending = 0;   /* 会话被待机强断: 不再等联网结果(防唤醒后误弹"未连上") */
+    NET_WifiStop();         /* 待机关 WiFi(最省电); 唤醒不自动重连(按需联网) */
+}
+static uint8_t stby_btn_pressed(void)   /* 任一按键按下(低电平) */
 {
     return (gpio_get_level(UI_KEY_UP) == 0) ||
            (gpio_get_level(UI_KEY_OK) == 0) ||
            (gpio_get_level(UI_KEY_DOWN) == 0);
 }
-
-static void standby_enter(void)
+static uint8_t stby_alarm_due(void)     { return ALM_Check(); }   /* 到点即唤醒(ALM 内已标记当日触发) */
+static void stby_sensor_suspend(void)   { MPU_Suspend(); }
+static void stby_sensor_resume(void)    { MPU_Resume(); }
+static void stby_alarm_wake(void)
 {
-    uint8_t alarm = 0;
-    printf("[STBY] enter\n");
-    NET_WifiStop();
-    net_conn_pending = 0;   /* 会话被待机强断: 不再等联网结果(防唤醒后误弹"未连上") */
-    /* 待机挂起按键轮询与六轴采样任务: 否则 20ms/30ms 轮询持续唤醒 CPU, 削弱浅睡眠省电;
-     * 唤醒判断改由本任务直接读 GPIO(standby_btn_pressed), 挂起不影响响应 */
-    if (input_task_h) vTaskSuspend(input_task_h);
-    MPU_Suspend();
-    esp_sleep_enable_timer_wakeup(STANDBY_TICK_US);
-    for (;;)
-    {
-        if (standby_btn_pressed()) break;          /* 按键唤醒 */
-        if (ALM_Check()) { alarm = 1; break; }     /* 闹钟到点(含本分钟) */
-        if (esp_light_sleep_start() != ESP_OK)     /* 定时器片睡眠 */
-        {
-            vTaskDelay(20 / portTICK_PERIOD_MS);   /* 防御: 被拒时降速重试, 防忙转 */
-        }
-    }
-    MPU_Resume();                                  /* 恢复六轴采样 */
-    if (input_task_h) vTaskResume(input_task_h);   /* 恢复按键轮询: 唤醒键的按下沿在恢复后被检测入队(长按判定从按下时刻起算) */
-    printf("[STBY] wake %s\n", alarm ? "alarm" : "btn");
-    if (!alarm) standby_reenter_at = (uint32_t)(esp_timer_get_time() / 1000) + 400;   /* 按键唤醒: 冷却 400ms, 防键还按住时反复进出待机 */
-    /* 路径1 完全按需: 唤醒不再自动重连 WiFi(省电+零暴露面). 需要联网时用户按 联网->连接网络 */
-    if (alarm)
-    {
-        uint32_t nw = (uint32_t)(esp_timer_get_time() / 1000);
-        /* 闹钟到点: 回主界面并显示(即使睡在子菜单也响) */
-        ui_to_main();
-        ALM_Show();
-        ui_push(ST_INS);
-        lcd_on();
-        scr_on = 1;
-        last_act = nw;
-    }
-    /* 按键唤醒: 不预亮屏, 按键事件由 input_task 入队, 主循环按"第一键仅唤醒"处理 */
+    ui_to_main();      /* 与亮屏路径一致: 先回主界面再显示闹钟指令 */
+    ALM_Show();        /* 闹钟专属指令乱码破译 */
+    ui_push(ST_INS);
 }
+static pwr_host_t s_pwr_host;   /* app_main 建任务后填充并交 PWR_Init */
 
 /* ================= UI 主任务: 收事件 + 推进各功能 + 息屏 + 神谕推送 ================= */
 static void ui_task(void *arg)
@@ -733,8 +663,7 @@ static void ui_task(void *arg)
     uint32_t oracle_last = 0;   /* 神谕检查节流 */
     uint32_t bat_last = 0;      /* 电量读取节流 */
     static char ui_user_last[INS_USER_NAME_MAX];   /* 主界面已显示的使用者名(变化才重绘) */
-    last_act = (uint32_t)(esp_timer_get_time() / 1000);
-    scr_on = 1;
+    PWR_Wake((uint32_t)(esp_timer_get_time() / 1000));
     strncpy(ui_user_last, INS_UserName(), sizeof(ui_user_last) - 1);
     ui_user_last[sizeof(ui_user_last) - 1] = '\0';
 
@@ -765,9 +694,7 @@ static void ui_task(void *arg)
                     }
                     INS_ShowIns(wcmd);   /* 网页下发: 无"致X:"自动加致当前使用者 */
                 }
-                lcd_on();
-                scr_on = 1;
-                last_act = now;
+                PWR_Wake(now);
             }
         }
 
@@ -776,7 +703,7 @@ static void ui_task(void *arg)
         {
             oracle_last = now;
             /* 每日签: 开机/换日后, 时间有效且主界面空闲, 显示一次"今日指令" */
-            if (ui_state == ST_MAIN && !flip_wait && NET_TimeOk())
+            if (ui_state == ST_MAIN && NET_TimeOk())
             {
                 char dd[8];
                 NET_DateStrCopy(dd, sizeof(dd));   /* 拷贝版: 防止与网页状态页并发读到静态缓冲 */
@@ -784,24 +711,10 @@ static void ui_task(void *arg)
                 {
                     strncpy(daily_last, dd, sizeof(daily_last) - 1);
                     daily_last[sizeof(daily_last) - 1] = '\0';
-                    /* 每日签计数(NVS "info"/"dsign", 与开机次数同命名空间; 系统信息页展示) */
-                    {
-                        nvs_handle_t h;
-                        uint32_t ds = 0;
-                        if (nvs_open("info", NVS_READWRITE, &h) == ESP_OK)
-                        {
-                            nvs_get_u32(h, "dsign", &ds);
-                            ds++;
-                            nvs_set_u32(h, "dsign", ds);
-                            nvs_commit(h);
-                            nvs_close(h);
-                        }
-                    }
+                    ORACLE_DsignInc();   /* 每日签计数(已收拢至 ORACLE 组件) */
                     INS_ShowRandom();
                     ui_push(ST_INS);
-                    lcd_on();
-                    scr_on = 1;
-                    last_act = now;
+                    PWR_Wake(now);
                 }
             }
             /* 联网开关 开启后等结果: 连上→"已连接" / 超时→"未连上"(正在连接屏就地换内容, 不残留) */
@@ -816,9 +729,7 @@ static void ui_task(void *arg)
                         ui_push(ST_INS);   /* 已退回就重开一屏, 否则就地换 */
                     }
                     INS_Show("已连接");
-                    lcd_on();
-                    scr_on = 1;
-                    last_act = now;
+                    PWR_Wake(now);
                 }
                 else if ((int32_t)(now - net_conn_deadline) >= 0)   /* 差比较: 防 uptime 49.7d 回绕误判超时 */
                 {
@@ -829,21 +740,17 @@ static void ui_task(void *arg)
                         ui_push(ST_INS);
                     }
                     INS_Show("未连上");
-                    lcd_on();
-                    scr_on = 1;
-                    last_act = now;
+                    PWR_Wake(now);
                 }
             }
             if (ORACLE_Due())
             {
                 ORACLE_Delivered();
-                if (ui_state == ST_MAIN && !flip_wait)
+                if (ui_state == ST_MAIN)
                 {
                     INS_ShowRandom();
                     ui_push(ST_INS);
-                    lcd_on();
-                    scr_on = 1;
-                    last_act = now;
+                    PWR_Wake(now);
                 }
             }
             if (ALM_Check())       /* 有闹钟到点(已在 ALM 内标记当日触发): 任意界面都打断显示 */
@@ -851,25 +758,17 @@ static void ui_task(void *arg)
                 ui_to_main();      /* 与待机闹钟唤醒一致: 先回主界面再显示闹钟指令 */
                 ALM_Show();        /* 闹钟专属指令乱码破译 */
                 ui_push(ST_INS);
-                lcd_on();
-                scr_on = 1;
-                last_act = now;
+                PWR_Wake(now);
             }
         }
 
         /* 屏亮 20ms 快速响应按键; 屏灭 200ms 慢轮询省电(走秒用 esp_timer 不依赖此轮询, 倒计时到点误差≤200ms) */
-        if (xQueueReceive(key_q, &evt, (scr_on ? 20u : 200u) / portTICK_PERIOD_MS))
+        if (xQueueReceive(key_q, &evt, (PWR_ScreenOn() ? 20u : 200u) / portTICK_PERIOD_MS))
         {
-            last_act = now;
-      /* TODO: 诊断日志, 定位Konami后删除 */
-            if (evt_flip_handle(evt))  /* 扣屏/抬腕: 全局处理, 且不受"第一键仅唤醒"拦截 */
+            PWR_Activity(now);   /* 任意按键均刷新活动时刻 */
+            if (!PWR_ScreenOn())     /* 屏幕休眠: 第一键仅唤醒(按键本身不透传) */
             {
-                /* 已在 evt_flip_handle 内完成亮灭屏与状态维护 */
-            }
-            else if (!scr_on)          /* 屏幕休眠: 第一键仅唤醒(按键本身不透传) */
-            {
-                lcd_on();
-                scr_on = 1;
+                PWR_Wake(now);
             }
             else
             {
@@ -879,7 +778,7 @@ static void ui_task(void *arg)
 
         /* 按需联网会话(路径1): 会话进行中但按键/网页都静默超时 -> 自动断(省电+缩暴露面).
          * 以"射频开"为前置(连不上也算会话, 防密码错/无信号时射频空开); 按键与网页请求(NET_Touch)续期. */
-        if (NET_SessionOn() && (now - last_act) >= NET_SESSION_IDLE_MS &&
+        if (NET_SessionOn() && (now - PWR_LastAct()) >= NET_SESSION_IDLE_MS &&
             NET_SessionIdleMs() >= NET_SESSION_IDLE_MS)
         {
             net_conn_pending = 0;   /* 会话被自动结束: 取消联网结果挂起(防误弹"未连上") */
@@ -890,17 +789,16 @@ static void ui_task(void *arg)
          * 到点蜂鸣并唤醒屏幕显示"你已到达X分钟后的未来!" */
         if (ui_state == ST_TIMER)
         {
-            tim_ret_t r = TIM_Tick(scr_on);
+            tim_ret_t r = TIM_Tick(PWR_ScreenOn());
             if (r == TIM_DONE)
             {
-                INS_BeepTimes(2);
-                if (!scr_on) { lcd_on(); scr_on = 1; }   /* 倒计时结束自动亮屏 */
-                last_act = now;
+                BUZZER_Beep(2);
+                PWR_Wake(now);   /* 倒计时结束自动亮屏+记活动 */
             }
             if (r == TIM_EXIT) ui_pop();      /* 完成/退出回 TTL 子菜单 */
         }
 
-        if (scr_on)
+        if (PWR_ScreenOn())
         {
             /* 网页保存配置/待办, 或使用者名变化: 当前界面即时刷新
              * (绘制统一在本任务做, 避免 httpd 任务与 UI 并发;
@@ -1001,7 +899,7 @@ static void ui_task(void *arg)
                             egg_hold_t = 0;
                             INS_Exit();            /* 内部已 UI_RenderScreen 回主界面 */
                             ui_pop();
-                            last_act = now;
+                            PWR_Activity(now);   /* 防回主界面后立即被判息屏 */
                         }
                     }
                     else egg_hold_t = 0;           /* 仍在破译, 重置定格计时 */
@@ -1013,20 +911,18 @@ static void ui_task(void *arg)
             }
 
             /* 息屏检查: 无按键超过设置时长则关背光 */
-            if (SET_TimeoutSec() > 0 && (now - last_act >= (uint32_t)SET_TimeoutSec() * 1000))
+            if (SET_TimeoutSec() > 0 && (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
             {
-                lcd_off();
-                scr_on = 0;
+                PWR_LcdOff();
             }
         }
-        INS_BeepTick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
+        BUZZER_Tick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
 
         /* 待机: 息屏后进浅睡眠(倒计时进行中不睡, 需精确走秒; 按键唤醒后有 400ms 冷却) */
-        if (scr_on == 0 && ui_state != ST_TIMER && ui_state != ST_POMO &&
-            !(flip_wait && now - flip_wait_since < FLIP_WAIT_MAX_MS) &&    /* 扣屏等待抬腕: 不进浅睡眠(MPU须保持采样) */
-            now >= standby_reenter_at)
+        if (!PWR_ScreenOn() && ui_state != ST_TIMER && ui_state != ST_POMO &&
+            PWR_StandbyAllowed(now))
         {
-            standby_enter();
+            PWR_StandbyEnter();   /* 息屏后浅睡眠; 扣屏等待窗/唤醒冷却由 POWER 判定 */
         }
     }
 }
@@ -1072,6 +968,7 @@ void app_main(void)
     UI_UserInit();   /* 加载使用者列表(网页可添加, NVS持久化), 须在 UI_Init 前 */
     UI_Init();
     lcd_sleep_hold();   /* 浅睡眠保持 CS/RST/DC 输出高, 防唤醒白屏 */
+    BUZZER_Init();   /* 有源蜂鸣器 GPIO15(低电平有效), 须在任何 Beep 前 */
     INS_Init();
     UI_SetUserTitle(INS_UserName());   /* 主菜单「使用者」标题 = 当前使用者(如李箱) */
     UI_RenderScreen();                 /* 重绘让标题立即生效 */
@@ -1115,6 +1012,16 @@ void app_main(void)
         printf("[FATAL] task create failed, restart\n");   /* 无界面半活状态最难排查: 直接重启 */
         esp_restart();
     }
+
+    /* 电源宿主回调注册(挂起谁/怎么查键/闹钟善后在 main 装配) */
+    s_pwr_host.input_task      = input_task_h;
+    s_pwr_host.on_enter        = stby_net_stop;
+    s_pwr_host.btn_pressed     = stby_btn_pressed;
+    s_pwr_host.alarm_due       = stby_alarm_due;
+    s_pwr_host.sensor_suspend  = stby_sensor_suspend;
+    s_pwr_host.sensor_resume   = stby_sensor_resume;
+    s_pwr_host.on_alarm_wake   = stby_alarm_wake;
+    PWR_Init(&s_pwr_host);
 
     vTaskDelete(NULL);   /* 主任务结束, 交由两个工作任务 */
 }

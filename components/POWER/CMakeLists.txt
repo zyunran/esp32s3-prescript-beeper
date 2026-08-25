@@ -1,11 +1,12 @@
 set(srcs
-        KEY.c)
+        POWER.c
+        battery.c)
 
 set(include_dirs
         .)
 
 set(requires
-        driver)
+        LCD esp_adc esp_timer esp_hw_support)
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
 

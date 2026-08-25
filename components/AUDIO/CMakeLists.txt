@@ -1,11 +1,13 @@
 set(srcs
-        SOUND.c snd_data.c)
+        BUZZER.c
+        SOUND.c
+        snd_data.c)
 
 set(include_dirs
         .)
 
 set(requires
-        driver esp_driver_i2s freertos)
+        driver esp_driver_i2s esp_timer)
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
 

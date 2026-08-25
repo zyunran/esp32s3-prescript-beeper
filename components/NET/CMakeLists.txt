@@ -1,5 +1,6 @@
 set(srcs
-        NET.c)
+        NET.c
+        net_weather.c)
 
 set(include_dirs
         .)

@@ -2,7 +2,7 @@
 #define __INSTRUCTION_H
 
 #include <stdint.h>
-#include "LCD.h"        /* 颜色宏(RED/BLUE...) */
+#include "color.h"   /* 只需颜色宏, 不再拖入驱动头 */        /* 颜色宏(RED/BLUE...) */
 
 /* 运行期指令库/使用者上限(与 WEB 输入校验共用) */
 #define INS_PRESET_MAX      40
@@ -21,16 +21,8 @@ extern volatile uint16_t INS_REVEAL_DELAY_MS;  /* 逐字揭示间隔 ms(越大�
 #define INS_SLIDE_START     10         /* 新解码字起始右移 px */
 #define INS_SLIDE_STEP      2          /* 解码字每帧左移 px */
 #define INS_WOBBLE          6          /* 全乱码阶段整块左右抖动 px */
-/* 蜂鸣器(GPIO15, 有源, 低电平有效: 低=响) */
-#define INS_BEEP_MS         220        /* 每次蜂鸣时长 ms */
-#define INS_BEEP_MIN        150        /* 相邻蜂鸣最短间隔 ms */
-#define INS_BEEP_MAX        500        /* 相邻蜂鸣最长间隔 ms */
-
 /* ================= API ================= */
-void INS_Init(void);                    /* 初始化蜂鸣器 GPIO */
-void INS_SetBeep(uint8_t on);           /* 蜂鸣总开关(1=响, 0=静音), 默认开 */
-void INS_BeepTick(void);                /* 蜂鸣推进, 由 UI 主任务每循环调用 */
-void INS_BeepTimes(uint8_t n);          /* 独立蜂鸣 n 下(倒计时结束等) */
+void INS_Init(void);                    /* 初始化指令库(NVS 配置载入+创建互斥量; 蜂鸣器见 BUZZER 组件) */
 void INS_Show(const char *text);        /* 显示一条自定义指令(乱码→逐字破译) */
 void INS_ShowIns(const char *text);     /* 指令显示: 已有"致X:"原样; 无则自动加"致{当前使用者}:" */
 void INS_ShowByIndex(uint8_t idx);      /* 显示预设指令(对应菜单项索引) */

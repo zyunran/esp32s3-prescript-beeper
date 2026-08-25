@@ -2,7 +2,7 @@
 #define __GACHA_H
 
 #include <stdint.h>
-#include "LCD.h"        /* 颜色宏(GRAY/RED/YELLOW...) */
+#include "color.h"   /* 只需颜色宏, 不再拖入驱动头 */        /* 颜色宏(GRAY/RED/YELLOW...) */
 
 /* ================= 卡池条目 ================= */
 typedef struct {

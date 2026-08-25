@@ -134,3 +134,19 @@ uint32_t ORACLE_Count(void)
     if (!ora_count_loaded) ora_count_load();
     return ora_count;
 }
+
+void ORACLE_DsignInc(void)
+{
+    /* 自 main.c 收编: 与开机次数同命名空间("info") */
+    nvs_handle_t h;
+    uint32_t ds = 0;
+    if (nvs_open("info", NVS_READWRITE, &h) == ESP_OK)
+    {
+        nvs_get_u32(h, "dsign", &ds);
+        ds++;
+        nvs_set_u32(h, "dsign", ds);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+

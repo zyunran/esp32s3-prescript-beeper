@@ -4,6 +4,7 @@
  * 归零: 蜂鸣2下 + 标题换成"你已到达X分钟后的未来!"(按键退出)
  * 倒计时中按确认: 极速快进到归零并显示到达消息(不蜂鸣) */
 #include "TIMER.h"
+#include "LCD.h"   /* 仅用 LCD_WIDTH 屏幕几何宏(显式声明驱动依赖) */
 #include "UI.h"
 #include "INSTRUCTION.h"
 #include "esp_timer.h"

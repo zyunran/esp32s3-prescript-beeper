@@ -199,7 +199,7 @@ ui_menu_cfg_t ui_menu_cfg[UI_MENU_COUNT] = {
     [UI_MENU_USER]    = { ui_user_title, UI_FN_USER, 0, NULL, 0 },   /* items/item_count 由 UI_UserInit 运行时填 */
     [UI_MENU_SETTING] = { "设置", UI_FN_SETTING,  0, NULL,              0 },
     [UI_MENU_NET]     = { "联网", UI_FN_NET,      0, cfg_net_items,     UI_NET_EXIT + 1 },
-    /* 「织机」彩蛋自 v1.03 移出主菜单: 主界面 Konami 手势 上上下下左右左右 解锁(components/LOOM) */
+    /* 「织机」彩蛋自 v1.03 移出主菜单: 主界面 Konami 手势 上上下下左右左右 解锁(LOOM, 已并入 UI 组件) */
     [UI_MENU_TTL]     = { "TTL协议", UI_FN_TTL,   0, cfg_ttl_items,     UI_TTL_EXIT + 1 },
 };
 

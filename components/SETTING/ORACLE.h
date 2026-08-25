@@ -12,4 +12,8 @@ uint8_t ORACLE_Due(void);       /* 1=当前时刻已到下一推送点(自动按
 void ORACLE_Delivered(void);    /* 消耗当前推送点, 推进到下一时刻 */
 uint32_t ORACLE_Count(void);    /* 神谕累计接收次数(NVS "oracle"/"cnt" 持久化) */
 
+
+/* 每日签计数(NVS "info"/"dsign"): 换日首刷自增一次, 系统信息页展示 */
+void ORACLE_DsignInc(void);
+
 #endif

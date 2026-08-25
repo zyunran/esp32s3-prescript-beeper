@@ -8,6 +8,7 @@
  * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrRect/UI_ScrGlyph/UI_ScrBlit)。
  */
 #include "GACHA.h"
+#include "LCD.h"   /* 仅用 LCD_WIDTH/HEIGHT 屏幕几何宏(显式声明驱动依赖) */
 #include "UI.h"
 #include "INSTRUCTION.h"
 #include "nvs_flash.h"

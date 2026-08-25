@@ -1,4 +1,4 @@
-/* INSTRUCTION 组件: 指令乱码破译显示 + 完成提示蜂鸣
+/* INSTRUCTION 组件: 指令乱码破译显示(蜂鸣器已拆至 BUZZER 组件)
  *  - 全屏显示一条指令文本: 先全乱码再逐字"破译"成真字
  *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {RAND:min-max} 随机数 / {TIMER} 内联计时占位
  *  - 乱码全取 ASCII 且字符数≠真字; 已解码字带滑入位移, 小概率回退乱码
@@ -6,6 +6,7 @@
  * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit/UI_RenderScreen)。
  */
 #include "INSTRUCTION.h"
+#include "BUZZER.h"
 #include "UI.h"
 #include "LCD.h"
 #include "SOUND.h"
@@ -35,9 +36,6 @@ volatile uint16_t INS_SCR_DEFAULT     = 0xE249;   /* 破译真字: 清晰红 */
 volatile uint16_t INS_SCR_GARBLE      = 0x651D;   /* 未破译乱码: 亮钢蓝 */
 volatile uint16_t INS_SCR_DELAY_MS    = 18;       /* 乱码刷新间隔 ms */
 volatile uint16_t INS_REVEAL_DELAY_MS = 80;       /* 逐字揭示间隔 ms */
-
-/* 破译完成提示蜂鸣(定义于下文蜂鸣器节) */
-static void ins_done_beep(void);
 
 /* 破译/蜂鸣可调参数定义在 INSTRUCTION.h 的"可调参数"节, 改那里即可 */
 #define INS_GLYPH_LINES       3              /* 最多行数(内部缓冲) */
@@ -523,74 +521,9 @@ static void ins_scr_step(void)
                 }
                 ins_scr_render();
                 SOUND_Stop();                              /* 停进行音 */
-                ins_done_beep();                           /* 破译完成: 蜂鸣器提示一响 */
+                BUZZER_Beep((uint8_t)(1 + (esp_random() & 1)));   /* 破译完成: 蜂鸣器提示一响(1~2下) */
             }
         }
-    }
-}
-
-/* 蜂鸣器(有源, GPIO15, 低电平有效: 低=响 高=静)
- * 状态变量被 ui_task(INS_BeepTick)与 httpd 任务(网页试响 INS_BeepTimes)并发读写:
- * volatile 防跨核缓存; 单字节/对齐 32 位写读在本芯片原子 */
-static volatile uint8_t  ins_beep_remain;       /* 剩余蜂鸣次数 */
-static volatile uint8_t  ins_beep_on;           /* 正在响 */
-static volatile uint32_t ins_beep_stop;         /* 本次蜂鸣结束时刻 */
-static volatile uint32_t ins_beep_next;         /* 下次蜂鸣开始时刻 */
-static volatile uint8_t  ins_beep_enabled = 1;  /* 蜂鸣总开关(设置可调) */
-
-static void ins_buzzer_init(void)
-{
-    gpio_config_t io = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << GPIO_NUM_15,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_ENABLE,   /* 上拉: 引脚空闲高=静, 防上电一直响 */
-    };
-    gpio_config(&io);
-    gpio_set_level(GPIO_NUM_15, 1);        /* 初始高=静(低电平有效) */
-    /* 最大驱动能力, 提高蜂鸣器音量 */
-    gpio_set_drive_capability(GPIO_NUM_15, GPIO_DRIVE_CAP_3);
-}
-
-static void ins_buzzer_on(void)
-{
-    gpio_set_level(GPIO_NUM_15, 0);   /* 有源低电平有效: 低=响 */
-}
-
-static void ins_buzzer_off(void)
-{
-    gpio_set_level(GPIO_NUM_15, 1);
-}
-
-/* 破译完成提示: 蜂鸣器响 1~2 下 */
-static void ins_done_beep(void)
-{
-    ins_beep_remain = 1 + (esp_random() & 1);   /* 1~2 下 */
-    ins_beep_next = ins_now_ms() + 30;          /* 立即开始 */
-    ins_beep_on = 0;
-}
-
-static void ins_beep_tick(void)
-{
-    uint32_t now = ins_now_ms();
-    if (!ins_beep_enabled)
-    {
-        return;                       /* 蜂鸣已关, 不启动蜂鸣 */
-    }
-    if (!ins_beep_on && ins_beep_remain > 0 && now >= ins_beep_next)
-    {
-        ins_buzzer_on();
-        ins_beep_on = 1;
-        ins_beep_stop = now + INS_BEEP_MS;
-        ins_beep_remain--;
-    }
-    else if (ins_beep_on && now >= ins_beep_stop)
-    {
-        ins_buzzer_off();
-        ins_beep_on = 0;
-        ins_beep_next = now + INS_BEEP_MIN +
-                        esp_random() % (INS_BEEP_MAX - INS_BEEP_MIN);
     }
 }
 
@@ -599,7 +532,6 @@ static void ins_presets_load(void);   /* 前置声明(定义在下文) */
 
 void INS_Init(void)
 {
-    ins_buzzer_init();
     ins_mux = xSemaphoreCreateRecursiveMutex();   /* M4: WEB 任务配置与 UI 读取互斥 */
     ins_presets_load();
     /* 破译参数 + 当前使用者(NVS "ins2") */
@@ -904,16 +836,6 @@ uint8_t INS_PresetsFromText(const char *text)
     return 1;
 }
 
-void INS_SetBeep(uint8_t on)
-{
-    ins_beep_enabled = on ? 1 : 0;
-    if (!ins_beep_enabled && ins_beep_on)
-    {
-        ins_buzzer_off();             /* 正在响则立即停 */
-        ins_beep_on = 0;
-    }
-}
-
 void INS_Show(const char *text)
 {
     if (strncmp(text, "{TODO}", 6) == 0)   /* 待办标记: 同时存入待办列表(去重), 正文去掉标记显示 */
@@ -930,14 +852,8 @@ void INS_Show(const char *text)
     ins_reveal_last = ins_now_ms();
     ins_scr_on = 1;
 
-    /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下 */
-    if (ins_beep_on)
-    {
-        ins_buzzer_off();   /* 取消/重置时若正响着, 立即断 GPIO, 防蜂鸣器卡在低电平持续响 */
-    }
-    ins_beep_remain = 0;
-    ins_beep_on = 0;
-    ins_beep_next = ins_now_ms() + 100 + esp_random() % 300;
+    /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下.
+     * 起解码先急停蜂鸣(断 GPIO + 作废待响排程), 防蜂鸣器卡在低电平持续响 */
 
     SOUND_PlayLoop(snd_progress, snd_progress_frames);   /* 乱码翻译进行音循环播放 */
 
@@ -1036,24 +952,6 @@ void INS_Tick(void)
     ins_scr_step();
 }
 
-/* 蜂鸣推进(解码随机哔/完成提示/倒计时提示), 由 UI 主任务每循环调用 */
-void INS_BeepTick(void)
-{
-    ins_beep_tick();
-}
-
-/* 独立蜂鸣 n 下(倒计时结束等), 走同一套 beep_tick 调度 */
-void INS_BeepTimes(uint8_t n)
-{
-    if (ins_beep_on)
-    {
-        ins_buzzer_off();   /* 正在响: 先断 GPIO 再重新调度, 防卡响 */
-    }
-    ins_beep_remain = n;
-    ins_beep_next = ins_now_ms() + 30;
-    ins_beep_on = 0;
-}
-
 uint8_t INS_Finished(void)
 {
     return (ins_scr_on && ins_scr_phase == 2);
@@ -1062,11 +960,7 @@ uint8_t INS_Finished(void)
 void INS_Exit(void)
 {
     ins_scr_on = 0;
-    if (ins_beep_on)
-    {
-        ins_buzzer_off();
-        ins_beep_on = 0;
-    }
+    BUZZER_Stop();   /* 急停蜂鸣: 断音并作废待响排程 */
     SOUND_Stop();          /* 停破译音效(进行音/结束音) */
     UI_RenderScreen();
 }

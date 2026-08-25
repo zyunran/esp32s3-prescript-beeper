@@ -2,7 +2,17 @@
 #define __UI_H
 
 #include <stdint.h>
-#include "LCD.h"        /* 颜色宏(WHITE/YELLOW/LBBLUE...) */
+#include "color.h"   /* 只需颜色宏, 不再拖入驱动头 */
+
+/* ================= 全局界面主题色(运行时可改, 默认护眼"柔和绿") =================
+ * 主界面/子菜单/抽卡/破译共用背景与文字色; WEB 配置页可改并写入 NVS.
+ * 声明收编于 UI(语义归属), 定义体暂在 LCD 组件 lcd.c. */
+extern uint16_t UI_COLOR_BG;    /* 背景 */
+extern uint16_t UI_COLOR_MENU;  /* 菜单文字 */
+extern uint16_t UI_COLOR_FRAME; /* 选中项线框 */
+extern uint16_t UI_COLOR_ICON;  /* 指令图标 */
+extern uint16_t UI_COLOR_TIME;  /* 左侧时钟 */
+extern uint16_t UI_COLOR_DATE;  /* 左上角日期 */        /* 颜色宏(WHITE/YELLOW/LBBLUE...) */
 
 /* 按键 GPIO 布局(改这里即可调整按键映射):
  *   UI_KEY_UP   = 内容上移

@@ -4,6 +4,7 @@
 #include "SETTING.h"
 #include "UI.h"
 #include "INSTRUCTION.h"
+#include "BUZZER.h"
 #include "SOUND.h"
 #include "MPU6050.h"
 #include "ORACLE.h"
@@ -97,7 +98,7 @@ void SET_Init(void)
     set_beep = set_beep ? 1 : 0;
     set_shake = set_shake ? 1 : 0;
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
-    INS_SetBeep(set_beep);
+    BUZZER_SetEnable(set_beep);
     SOUND_SetVolume(set_vol);
     MPU_SetShake(set_shake);
     UI_SetCursorStyle(set_cursor);
@@ -135,7 +136,7 @@ void SET_SetVol(uint8_t v)
 void SET_SetBeep(uint8_t on)
 {
     set_beep = on ? 1 : 0;
-    INS_SetBeep(set_beep);
+    BUZZER_SetEnable(set_beep);
     settings_save();
 }
 
@@ -269,8 +270,8 @@ void SET_SubmenuSelect(uint8_t sel)
     else if (sel == SET_IDX_BEEP)   /* 蜂鸣器: 开/关(有源) */
     {
         set_beep = set_beep ? 0 : 1;
-        INS_SetBeep(set_beep);
-        if (set_beep) INS_BeepTimes(1);   /* 打开时试响一下 */
+        BUZZER_SetEnable(set_beep);
+        if (set_beep) BUZZER_Beep(1);   /* 打开时试响一下 */
         settings_save();
         snprintf(settings_buf[SET_IDX_BEEP], sizeof(settings_buf[0]),
                  "蜂鸣 %s", set_beep ? "开" : "关");

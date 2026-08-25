@@ -5,7 +5,7 @@ set(include_dirs
         .)
 
 set(requires
-        driver LCD UI INSTRUCTION esp_hw_support esp_timer freertos nvs_flash)
+        LCD UI INSTRUCTION esp_hw_support esp_timer nvs_flash)
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
 

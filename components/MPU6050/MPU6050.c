@@ -314,8 +314,6 @@ float MPU_Yaw(void)    { return f_yaw; }
 #define EVT_OK         2
 #define EVT_DOWN       3
 #define EVT_LONG_OK    4
-#define EVT_FLIP_DOWN  5                     /* 扣屏(面朝下保持): main 灭屏 */
-#define EVT_RAISE      6                     /* 抬腕/翻回: main 亮屏 */
 
 static QueueHandle_t mpu_q = NULL;
 static TaskHandle_t  mpu_task_h = NULL;       /* 采样任务句柄 */
@@ -347,61 +345,9 @@ void MPU_Resume(void)
     mpu_last_retry = 0;
 }
 
-/* 重力低通状态(文件级): 摇动方向判别 与 扣屏/抬腕检测 共用 gz_f */
+/* 重力低通状态(文件级): 摇动方向判别用(扣屏/抬腕功能已删, 省电交给浅睡眠待机) */
 static float gx_f, gy_f, gz_f;
 static uint8_t g_init = 0;
-
-/* ================= 扣屏熄屏 / 抬腕亮屏 =================
- * PCB 平躺 grav_z≈+0.98g / 直立≈+0.5g / 面朝下≈-0.9g:
- *   grav_z < -0.45g 持续 FLIP_HOLD_MS -> 发 EVT_FLIP_DOWN(main 灭屏);
- *   grav_z > +0.20g 持续 RAISE_HOLD_MS -> 发 EVT_RAISE(main 亮屏).
- * 只发事件不碰 LCD(LCD 单写者约定). 开关随「设置→摇动」(关摇动同时关翻转检测). */
-#define FLIP_DOWN_G    (-0.45f * ACCEL_G)
-#define FLIP_UP_G      (0.20f * ACCEL_G)
-#define FLIP_HOLD_MS   500u                  /* 面朝下需持续时长(加严: 排除甩动手势途中的姿态掠过) */
-#define RAISE_HOLD_MS  200u
-#define FLIP_EVT_CD    800u                  /* 两次翻转事件最小间隔 */
-
-static uint8_t flip_down = 0;                /* 当前是否处于扣屏态 */
-static uint32_t flip_hold_at = 0;            /* 当前极性开始持续的时刻(0=未持续) */
-static uint32_t flip_evt_at = 0;             /* 上次发翻转事件时刻 */
-
-static void mpu_flip_send(uint8_t evt, uint32_t now)
-{
-    flip_evt_at = now;
-    if (mpu_q) xQueueSend(mpu_q, &evt, 0);
-}
-
-static void mpu_flip_tick(uint32_t now)
-{
-    if (flip_evt_at && now - flip_evt_at < FLIP_EVT_CD) return;   /* 事件冷却(防翻转过程连发) */
-    if (!flip_down)
-    {
-        if (gz_f < FLIP_DOWN_G)
-        {
-            if (!flip_hold_at) flip_hold_at = now;
-            else if (now - flip_hold_at >= FLIP_HOLD_MS)
-            {
-                flip_down = 1; flip_hold_at = 0;
-                mpu_flip_send(EVT_FLIP_DOWN, now);
-            }
-        }
-        else flip_hold_at = 0;
-    }
-    else
-    {
-        if (gz_f > FLIP_UP_G)
-        {
-            if (!flip_hold_at) flip_hold_at = now;
-            else if (now - flip_hold_at >= RAISE_HOLD_MS)
-            {
-                flip_down = 0; flip_hold_at = 0;
-                mpu_flip_send(EVT_RAISE, now);
-            }
-        }
-        else flip_hold_at = 0;
-    }
-}
 
 static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, float gzd)
 {
@@ -426,8 +372,6 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
     gz_f += alpha * ((float)az - gz_f);
 
     now = (uint32_t)(esp_timer_get_time() / 1000);
-
-    mpu_flip_tick(now);                      /* 扣屏/抬腕检测(独立于摇动冷却) */
 
     if (now < cd_until) return;              /* 最小间隔 */
 

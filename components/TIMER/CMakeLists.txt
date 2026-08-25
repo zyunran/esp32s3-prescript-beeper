@@ -1,11 +1,13 @@
 set(srcs
-        TIMER.c)
+        TIMER.c
+        POMODORO.c
+        ALARM.c)
 
 set(include_dirs
         .)
 
 set(requires
-        UI INSTRUCTION esp_timer)
+        LCD UI INSTRUCTION NET nvs_flash esp_timer esp_hw_support)
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires})
 
