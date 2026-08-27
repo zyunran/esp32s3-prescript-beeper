@@ -1,5 +1,5 @@
 /* NET 组件: WiFi STA 联网 + SNTP 校时 + 心知天气 3 日预报(路径1: 完全按需、离线优先)
- *  - 射频默认关闭: 只有 联网->连接网络(NET_Connect) 打开的短会话; 会话按需开关, 空闲超时自动断
+ *  - 射频默认关闭: 只有 联网->连接网络(NET_Connect) 手动打开; 不再空闲自动断, 避免 OTA 下载中断
  *  - 会话结束(NET_SessionEnd / NET_WifiStop): 静止射频(省电 + 零网络暴露面); 唤醒/待机不再自动重连
  *  - STA 已连时再按"连接网络" = 手动断开; 网页每个请求都 NET_Touch() 续期, 防气象屏期间被误断
  *  - 拿到 IP 后后台拉取一次 3 日天气(会话短, 无驻留周期刷新); 今日天气显示在时钟下方(UI 组件)
@@ -60,7 +60,7 @@ static uint8_t net_wifi_ok = 0;   /* WiFi 已连上 */
 static uint8_t net_time_ok = 0;   /* 时间已同步 */
 static uint8_t net_radio_on = 0;  /* 射频已启动(esp_wifi_start 成功且未被 stop): 按需会话的"在网"标志 */
 static uint8_t net_manual_off = 0;/* 本次断开为手动交接(NET_SessionEnd): 抑制 DISCONNECTED 事件里的自动重连 */
-static uint32_t net_last_activity = 0;  /* 会话最近一次活动(NET_Connect/NET_Touch)时刻 ms, 供空闲自动断 */
+static uint32_t net_last_activity = 0;  /* 会话最近一次活动(NET_Connect/NET_Touch)时刻 ms(保留给外部查询) */
 
 /* ================= AP 配网热点状态(省电: 无客户端超时自动关) ================= */
 static uint8_t  net_ap_client = 0;           /* 1=有手机连着热点 */
@@ -618,7 +618,7 @@ void NET_WifiStop(void)
     net_dns_active = 0;        /* 停 WiFi: DNS(captive portal)任务一并停(防配网热点空转耗电) */
 }
 
-/* 结束 STA 联网会话(手动 联网->连接网络 再按一次, 或 ui_task 空闲超时自动断):
+/* 结束 STA 联网会话(目前仅由 联网->连接网络 手动开关):
  * 配网热点开着时只断 STA 关联(保留热点与配置页), 否则整机射频停. */
 void NET_SessionEnd(void)
 {
@@ -639,13 +639,13 @@ void NET_SessionEnd(void)
     }
 }
 
-/* 会话活动续期: WEB 每个请求调用, 让"网页配置中"不被空闲自动断误判(路径1) */
+/* 会话活动续期: WEB 每个请求调用, 供外部查询/后续策略使用 */
 void NET_Touch(void)
 {
     net_last_activity = (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* 距上次会话活动(NET_Connect/NET_Touch)的毫秒数; 未在网返回 UINT32_MAX(供空闲自动断判断) */
+/* 距上次会话活动(NET_Connect/NET_Touch)的毫秒数; 未在网返回 UINT32_MAX */
 uint32_t NET_SessionIdleMs(void)
 {
     if (!net_radio_on)

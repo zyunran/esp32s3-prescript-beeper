@@ -57,8 +57,6 @@
 #define LONG_PRESS_MS   600
 #define REPEAT_PRESS_MS 150
 
-/* 路径1 联网会话空闲超时(ms): 连网后按键/网页(NET_Touch)都静默超此时长 -> 自动断(省电+缩暴露面). */
-#define NET_SESSION_IDLE_MS  60000
 /* 开启联网后, 超过此时长仍没连上则判定"未连上"并反馈 */
 #define NET_CONNECT_RESULT_MS  12000
 
@@ -843,15 +841,6 @@ static void ui_task(void *arg)
             {
                 on_event(evt);
             }
-        }
-
-        /* 按需联网会话(路径1): 会话进行中但按键/网页都静默超时 -> 自动断(省电+缩暴露面).
-         * 以"射频开"为前置(连不上也算会话, 防密码错/无信号时射频空开); 按键与网页请求(NET_Touch)续期. */
-        if (NET_SessionOn() && (now - PWR_LastAct()) >= NET_SESSION_IDLE_MS &&
-            NET_SessionIdleMs() >= NET_SESSION_IDLE_MS)
-        {
-            net_conn_pending = 0;   /* 会话被自动结束: 取消联网结果挂起(防误弹"未连上") */
-            NET_SessionEnd();
         }
 
         /* 倒计时: 无论亮屏与否都推进(render=亮屏才重绘, 熄屏省电);
