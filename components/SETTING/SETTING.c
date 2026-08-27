@@ -9,6 +9,7 @@
 #include "MPU6050.h"
 #include "ORACLE.h"
 #include "GACHA.h"
+#include "esp_app_desc.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
 #include "esp_log.h"
@@ -418,11 +419,16 @@ static void set_info_render(void)
     switch (set_info_page)
     {
         case 0:
-            snprintf(buf, sizeof(buf), "堆 %u\n栈 %u\n开机 %u次",
-                     (unsigned)esp_get_free_heap_size(),
-                     (unsigned)uxTaskGetStackHighWaterMark(NULL),
+        {
+            const esp_app_desc_t *desc = esp_app_get_description();
+            snprintf(buf, sizeof(buf), "%s %s\n%s %s\n开机 %u次",
+                     desc ? desc->project_name : "oder",
+                     desc ? desc->version : "?",
+                     desc ? desc->date : "?",
+                     desc ? desc->time : "?",
                      (unsigned)set_boot_count);
             break;
+        }
         case 1:
             snprintf(buf, sizeof(buf), "神谕 %u次\n每日签 %u次\n已抽 %u/120",
                      (unsigned)ORACLE_Count(),
