@@ -143,6 +143,7 @@ static void ota_task(void *arg)
     }
 
     content_len = esp_http_client_fetch_headers(client);
+    ESP_LOGI(TAG, "OTA start: url=%s status=200 content_len=%d", s_url, content_len);
 
     part = esp_ota_get_next_update_partition(NULL);
     if (!part)
@@ -161,31 +162,39 @@ static void ota_task(void *arg)
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);
     ota_set_status("正在下载固件...");
-
-    for (;;)
     {
-        int r = esp_http_client_read(client, buf, sizeof(buf));
-        if (r < 0)
+        int last_log = 0;
+        for (;;)
         {
-            ota_fail(handle, "下载中断");
-            mbedtls_sha256_free(&sha);
-            goto out;
-        }
-        if (r == 0) break;
+            int r = esp_http_client_read(client, buf, sizeof(buf));
+            if (r < 0)
+            {
+                ESP_LOGE(TAG, "read failed: %d (downloaded %d/%d)", r, total, content_len);
+                ota_fail(handle, "下载中断");
+                mbedtls_sha256_free(&sha);
+                goto out;
+            }
+            if (r == 0) break;
 
-        if (esp_ota_write(handle, buf, (size_t)r) != ESP_OK)
-        {
-            ota_fail(handle, "固件写入失败");
-            mbedtls_sha256_free(&sha);
-            goto out;
-        }
-        mbedtls_sha256_update(&sha, (unsigned char *)buf, (size_t)r);
+            if (esp_ota_write(handle, buf, (size_t)r) != ESP_OK)
+            {
+                ota_fail(handle, "固件写入失败");
+                mbedtls_sha256_free(&sha);
+                goto out;
+            }
+            mbedtls_sha256_update(&sha, (unsigned char *)buf, (size_t)r);
 
-        total += r;
-        if (content_len > 0)
-        {
-            s_progress = total * 100 / content_len;
-            if (s_progress > 100) s_progress = 100;
+            total += r;
+            if (content_len > 0)
+            {
+                s_progress = total * 100 / content_len;
+                if (s_progress > 100) s_progress = 100;
+            }
+            if (total - last_log >= 256 * 1024)
+            {
+                last_log = total;
+                ESP_LOGI(TAG, "downloading %d/%d", total, content_len);
+            }
         }
     }
 
@@ -328,10 +337,16 @@ int     ota_drv_progress(void){ return s_progress; }
 void ota_drv_status(char *buf, size_t n)
 {
     if (!buf || n == 0) return;
-    strncpy(buf, s_status, n - 1);
-    buf[n - 1] = '\0';
+    if (s_state == OTA_STATE_DOWNLOADING && s_progress >= 0)
+    {
+        snprintf(buf, n, "%s (%d%%)", s_status, s_progress);
+    }
+    else
+    {
+        strncpy(buf, s_status, n - 1);
+        buf[n - 1] = '\0';
+    }
 }
-
 esp_err_t ota_drv_mark_valid(void)
 {
     return esp_ota_mark_app_valid_cancel_rollback();
