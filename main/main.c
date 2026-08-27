@@ -30,6 +30,7 @@
 #include "BUZZER.h"
 #include "POWER.h"
 #include "WEB.h"
+#include "ota_drv.h"
 #include "MPU6050.h"
 #include "DS1302.h"
 #include "nvs_flash.h"
@@ -73,6 +74,8 @@ static uint8_t net_conn_pending = 0;    /* 联网开关 开启后等结果: 连�
 static uint32_t net_conn_deadline = 0;  /* 结果判定超时时刻(esp_timer ms) */
 static uint8_t reset_pending = 0;     /* 初始化确认中: 再按OK清除NVS重启 */
 static uint8_t set_info_active = 0;   /* 1=正在"系统信息"翻页页(上下键翻页, 其他键返回) */
+static uint8_t ota_info_active = 0;   /* 1=正在"版本更新(OTA)"信息页 */
+static uint32_t ota_ui_last = 0;      /* OTA 信息页重绘节流 */
 
 /* ================= 菜单返回栈 =================
  * 进入子页面/信息页/计时等之前压入当前屏幕, 返回时弹栈还原, 消除各处硬编码的"回哪"关系.
@@ -512,6 +515,29 @@ static void on_event(uint8_t evt)
                         INS_Show("确认初始化?\n再按OK清除全部并重启");
                         ui_push(ST_INFO);
                     }
+                    else if (sel == SET_IDX_UPDATE)   /* 版本更新(OTA) */
+                    {
+                        if (!ota_drv_configured())
+                        {
+                            UI_FullScreen("版本更新", "未配置OTA地址");
+                            ota_info_active = 0;
+                            ui_push(ST_INFO);
+                        }
+                        else if (ota_drv_busy())
+                        {
+                            UI_FullScreen("版本更新", "升级正在进行...");
+                            ota_info_active = 1;
+                            ui_push(ST_INFO);
+                        }
+                        else
+                        {
+                            esp_err_t ota_err = ota_drv_start();
+                            UI_FullScreen("版本更新",
+                                          (ota_err == ESP_OK) ? "开始检查更新..." : "启动升级失败");
+                            ota_info_active = (ota_err == ESP_OK);
+                            ui_push(ST_INFO);
+                        }
+                    }
                     else
                     {
                         SET_SubmenuSelect(sel);
@@ -586,6 +612,13 @@ static void on_event(uint8_t evt)
         }
 
         case ST_INFO:                       /* 乱码信息/开启配网/初始化确认页/系统信息翻页 */
+            if (ota_info_active)            /* 版本更新页: 任意键返回设置(升级在后台继续) */
+            {
+                ota_info_active = 0;
+                INS_Exit();
+                ui_pop();
+                break;
+            }
             if (reset_pending)              /* 初始化: 再按OK清NVS重启, 其他键取消 */
             {
                 reset_pending = 0;
@@ -946,7 +979,20 @@ static void ui_task(void *arg)
             }
             else if (ui_state == ST_INS || ui_state == ST_INFO)
             {
-                INS_Tick();                        /* 破译动画推进(非阻塞; 系统信息/开启配网提示也走乱码) */
+                if (ui_state == ST_INFO && ota_info_active)
+                {
+                    if (now - ota_ui_last >= 200)   /* 节流重绘, 避免每 20ms 全屏刷屏 */
+                    {
+                        char ota_st[64];
+                        ota_ui_last = now;
+                        ota_drv_status(ota_st, sizeof(ota_st));
+                        UI_FullScreen("版本更新", ota_st);
+                    }
+                }
+                else
+                {
+                    INS_Tick();                    /* 破译动画推进(非阻塞; 系统信息/开启配网提示也走乱码) */
+                }
                 /* 彩蛋确认「MADE IN HEAVEN」: 破译完成后定格片刻, 自动回主界面看时间加速 */
                 if (egg_confirm && ui_state == ST_INS)
                 {
@@ -1063,6 +1109,8 @@ void app_main(void)
     MPU_Init();   /* MPU6050 六轴初始化(软件I2C, 无传感器则后台重试) */
     GACHA_Init(); /* 创建抽卡/图鉴跨任务互斥量(须在 WEB_Init 启动 httpd 之前, 避免绘图请求撞上 mux=NULL) */
     WEB_Init();   /* 启动配置页(联网后访问 http://<ip>/) */
+    ota_drv_init();   /* 加载 OTA 配置(NVS "ota": url/sha256) */
+    ota_drv_mark_valid();   /* 当前固件能跑到这里: 标记有效, 防止异常回滚 */
     UI_RenderScreen();   /* WEB_Init 已加载持久化主题色: 应用后重绘一次 */
 
     key_q = xQueueCreate(8, sizeof(uint8_t));

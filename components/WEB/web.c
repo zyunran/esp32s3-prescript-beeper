@@ -30,6 +30,7 @@
 #include "TODO.h"
 #include "ANSWER.h"
 #include "BATTERY.h"
+#include "ota_drv.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -316,6 +317,16 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddNumberToObject(garble, "rv", rv);
         cJSON_AddNumberToObject(garble, "fnt", INS_Font());   /* 破译字号 0..3 = 16/24/32/64px */
         cJSON_AddItemToObject(root, "garble", garble);
+    }
+
+    /* OTA 配置: 仅回传 URL/SHA256，不包含任何密钥类信息 */
+    {
+        cJSON *ota = cJSON_CreateObject();
+        cJSON_AddStringToObject(ota, "url", ota_drv_url());
+        cJSON_AddStringToObject(ota, "sha256", ota_drv_sha256());
+        cJSON_AddNumberToObject(ota, "busy", ota_drv_busy() ? 1 : 0);
+        cJSON_AddNumberToObject(ota, "progress", ota_drv_progress());
+        cJSON_AddItemToObject(root, "ota", ota);
     }
 
     {
@@ -619,6 +630,33 @@ static int web_apply_cursor(cJSON *root)
     return 1;
 }
 
+static int web_apply_ota(cJSON *root)
+{
+    cJSON *ota = cJSON_GetObjectItem(root, "ota");
+    if (!ota) return 1;
+    if (!cJSON_IsObject(ota)) return 0;
+
+    cJSON *url = cJSON_GetObjectItem(ota, "url");
+    if (url)
+    {
+        if (!cJSON_IsString(url) || strlen(url->valuestring) >= OTA_URL_MAX) return 0;
+        if (url->valuestring[0] && strncmp(url->valuestring, "http://", 7) != 0 &&
+            strncmp(url->valuestring, "https://", 8) != 0) return 0;
+        ota_drv_set_url(url->valuestring);
+    }
+
+    cJSON *sha = cJSON_GetObjectItem(ota, "sha256");
+    if (sha)
+    {
+        size_t n;
+        if (!cJSON_IsString(sha)) return 0;
+        n = strlen(sha->valuestring);
+        if (n != 0 && n != 64) return 0;
+        ota_drv_set_sha256(sha->valuestring);
+    }
+    return 1;
+}
+
 static int web_apply_decode(cJSON *root)
 {
     cJSON *garble = cJSON_GetObjectItem(root, "garble");
@@ -786,6 +824,27 @@ static int web_cfg_validate(cJSON *root)
     if (ins64 && (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring))) return 0;
     cJSON *theme = cJSON_GetObjectItem(root, "theme");
     if (theme && (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= 3)) return 0;
+    cJSON *ota = cJSON_GetObjectItem(root, "ota");
+    if (ota)
+    {
+        cJSON *url, *sha;
+        size_t n;
+        if (!cJSON_IsObject(ota)) return 0;
+        url = cJSON_GetObjectItem(ota, "url");
+        if (url)
+        {
+            if (!cJSON_IsString(url) || strlen(url->valuestring) >= OTA_URL_MAX) return 0;
+            if (url->valuestring[0] && strncmp(url->valuestring, "http://", 7) != 0 &&
+                strncmp(url->valuestring, "https://", 8) != 0) return 0;
+        }
+        sha = cJSON_GetObjectItem(ota, "sha256");
+        if (sha)
+        {
+            if (!cJSON_IsString(sha)) return 0;
+            n = strlen(sha->valuestring);
+            if (n != 0 && n != 64) return 0;
+        }
+    }
     return 1;
 }
 
@@ -847,7 +906,7 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||
         !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) ||
-        !web_apply_theme(root) || !web_apply_ins64(root) || !web_apply_decode(root))
+        !web_apply_theme(root) || !web_apply_ins64(root) || !web_apply_ota(root) || !web_apply_decode(root))
     {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid field");

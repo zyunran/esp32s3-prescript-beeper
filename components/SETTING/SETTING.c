@@ -262,6 +262,7 @@ static void settings_items_refresh(void)
              "光标 %s", set_cursor_name[set_cursor]);
     snprintf(settings_buf[SET_IDX_THEME], sizeof(settings_buf[0]),
              "主题 %s", set_theme_name[set_theme]);
+    snprintf(settings_buf[SET_IDX_UPDATE], sizeof(settings_buf[0]), "版本更新");
     strcpy(settings_buf[SET_IDX_EXIT], "退出");
     for (i = 0; i < SET_IDX_COUNT; i++)
     {

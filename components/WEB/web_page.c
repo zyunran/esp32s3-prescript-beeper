@@ -57,6 +57,9 @@ const char web_page[] =
 "<h2>⑦ 待办(指令日志)</h2><div class=hint>要执行的事; 指令前加 {TODO} 会在设备破译时自动存入</div>"
 "<div class=row><input id=txt type=text placeholder='要执行的事' style='flex:1'><button onclick=todoAdd() style='background:#2a5a8f;color:#fff;padding:8px 16px;border:0;border-radius:6px'>添加</button><button onclick=todoClear() style='background:#5a2a2a;color:#fff;padding:8px 16px;border:0;border-radius:6px'>清空</button></div>"
 "<div id=todolist></div>"
+"<h2>OTA 固件升级</h2><div class=hint>填固件直链(如 GitHub Release 的 oder.bin)与 SHA256；保存后到设备“设置→版本更新”开始升级</div>"
+"<div class=row><label>固件 URL <input id=otaurl type=text style=width:100% placeholder='https://github.com/.../oder.bin'></label></div>"
+"<div class=row><label>SHA256(可留空) <input id=otasha type=text style=width:100% placeholder='64位 hex,留空则跳过校验'></label></div>"
 "<h2>⑧ 设备状态</h2><div id=devst class=hint>加载中…</div><button onclick=devst() style='background:#2a5a8f;color:#fff;padding:8px 16px;border:0;border-radius:6px;margin-top:6px'>刷新</button>"
 "<h2>📨 发指令给 BB 机</h2><div class=hint>输入文字点发送, 设备立刻乱码破译显示</div>"
 "<div class=row><input id=sendtxt type=text placeholder='如: 去喝水' maxlength='96' style='flex:1'><button onclick=sendcmd() style='background:#2a5a8f;color:#fff;padding:8px 16px;border:0;border-radius:6px'>发送</button></div>"
@@ -86,7 +89,7 @@ const char web_page[] =
 "document.getElementById('ans0').value=j.ans&&j.ans.c0||'';document.getElementById('ans1').value=j.ans&&j.ans.c1||'';document.getElementById('ans2').value=j.ans&&j.ans.c2||'';document.getElementById('ans3').value=j.ans&&j.ans.c3||'';"
 "let uo=j.users.map(u=>'<option'+(u==j.user?' selected':'')+'>'+esc(u)+'</option>').join('');if(j.users.indexOf(j.user)<0)uo+='<option selected>'+esc(j.user)+'</option>';document.getElementById('user').innerHTML=uo;"
 "document.getElementById('cols').innerHTML=COLS.map((c,i)=>'<span>'+CN[i]+'<input type=color id=col_'+c+' value=#'+j.colors[c]+'></span>').join('');"
-"AL=j.alarms||[];almRender();"   /* 不过滤 en=0: 设备端关闭/一次性触发后的闹钟也要显示可恢复, 保存时全量回传保留字段 */
+"document.getElementById('otaurl').value=j.ota&&j.ota.url||'';document.getElementById('otasha').value=j.ota&&j.ota.sha256||'';AL=j.alarms||[];almRender();"   /* 不过滤 en=0: 设备端关闭/一次性触发后的闹钟也要显示可恢复, 保存时全量回传保留字段 */
 "document.getElementById('beep').checked=j.beep?1:0;document.getElementById('vol').value=j.vol;document.getElementById('key_sound').value=j.key_sound;document.getElementById('theme').value=j.theme;"
 "document.getElementById('timeout').value=j.timeout;document.getElementById('on').value=j.oracle_n;document.getElementById('ow').value=j.oracle_win;"
 "document.getElementById('cursor').value=j.cursor;"
@@ -106,7 +109,7 @@ const char web_page[] =
 "timeout:+document.getElementById('timeout').value,oracle_n:+document.getElementById('on').value,oracle_win:+document.getElementById('ow').value,"
 "cursor:+document.getElementById('cursor').value,"
 "garble:{def:document.getElementById('gdef').value.slice(1),gb:document.getElementById('ggb').value.slice(1),dl:+document.getElementById('gdl').value,rv:+document.getElementById('grv').value,fnt:+document.getElementById('gfnt').value},"
-"ans:{c0:document.getElementById('ans0').value,c1:document.getElementById('ans1').value,c2:document.getElementById('ans2').value,c3:document.getElementById('ans3').value}};"
+"ota:{url:document.getElementById('otaurl').value,sha256:document.getElementById('otasha').value},ans:{c0:document.getElementById('ans0').value,c1:document.getElementById('ans1').value,c2:document.getElementById('ans2').value,c3:document.getElementById('ans3').value}};"
 "let j=await (await fetch('/api/cfg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();"
 "document.getElementById('msg').textContent=j.ok?'✓ 已保存':'保存失败';}"
 "async function beep(){await fetch('/api/beep',{method:'POST'});}"
