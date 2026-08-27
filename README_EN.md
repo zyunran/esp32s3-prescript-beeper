@@ -5,10 +5,18 @@ English · [中文](README.md)
 An ESP32-S3 firmware for a desktop **pager (BB-machine)**-shaped personal terminal: 284×76 hand-drawn UI, three buttons + shake gestures, speaker / buzzer sound effects, integrating **clock & weather / "glitch" instruction decoder / gacha & dice / alarm & countdown / todos / answer book / daily oracle push**; you can provision the network offline, change all settings, and send instructions from a phone or PC browser.
 
 - Platform: ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C
-- Flash: 16MB (app partition 4MB, OTA not enabled)
+- Flash: 16MB (OTA dual partitions: ota_0 / ota_1, 2MB each)
 - Most code is vibe-coded; v1.06 fixes the main stability issues, and refactoring continues
 - Reusable driver library: `D:/STM32Project/Library_SK/my_esp32_lib/esp32oder` (decoupled, with usage docs)
 ---
+
+## v1.11 Changes
+
+- Settings → System Info page 1 now shows project name / version / build date / build time
+- Version is managed by `version.txt` in the project root (e.g. `v1.11`)
+- OTA download screen shows live percentage progress
+- OTA now follows GitHub 302 redirects
+- STA network is manual-only; no idle auto-disconnect, so OTA downloads are not interrupted
 
 ## v1.06 Changes
 
@@ -103,6 +111,7 @@ Artifact: `build/oder.bin` (~1.57 MB).
 
 ### Notes
 
+0. **How to change the version**: edit `version.txt` in the project root, e.g. set it to `v1.12`, then run `idf.py build`. No code macro to change.
 1. **Currently everything runs on a breadboard with modules and is incomplete; a PCB version is in progress.**
 
 > **Privacy**: this repository does not contain any personal WiFi SSID/password or weather API key — on first use they must be entered on the config page (or written into the device's NVS `net` namespace); the source defaults to empty.
