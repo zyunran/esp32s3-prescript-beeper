@@ -5,6 +5,7 @@
  */
 #include "ota_drv.h"
 #include "nvs_flash.h"
+#include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_ota_ops.h"
@@ -20,6 +21,8 @@
 #define OTA_NS "ota"
 #define OTA_TASK_STACK 8192
 #define OTA_HTTP_BUF   2048
+
+static const char *TAG = "OTA";
 
 static char s_url[OTA_URL_MAX] = "";
 static char s_sha[OTA_SHA256_MAX] = "";
@@ -106,11 +109,35 @@ static void ota_task(void *arg)
 
     {
         int status = esp_http_client_get_status_code(client);
+        int redirects = 0;
+
+        /* GitHub Release 直链会 302 到 objects.githubusercontent.com；
+         * 低层 esp_http_client_open() 不会自动跟随重定向，必须手动处理。 */
+        while (status >= 300 && status < 400 && redirects < 5)
+        {
+            ESP_LOGW(TAG, "HTTP redirect %d, follow...", status);
+            esp_http_client_set_redirection(client);
+            esp_http_client_close(client);
+            err = esp_http_client_open(client, 0);
+            if (err != ESP_OK)
+            {
+                ota_fail(0, "重定向后无法连接");
+                goto out;
+            }
+            status = esp_http_client_get_status_code(client);
+            redirects++;
+        }
+
         if (status >= 400)
         {
             char m[64];
             snprintf(m, sizeof(m), "服务器返回 %d", status);
             ota_fail(0, m);
+            goto out;
+        }
+        if (redirects >= 5)
+        {
+            ota_fail(0, "重定向次数过多");
             goto out;
         }
     }
@@ -165,6 +192,13 @@ static void ota_task(void *arg)
     mbedtls_sha256_finish(&sha, digest);
     mbedtls_sha256_free(&sha);
 
+    if (content_len > 0 && total != content_len)
+    {
+        ESP_LOGE(TAG, "size mismatch: got %d, expected %d", total, content_len);
+        ota_fail(0, "下载大小不匹配");
+        goto out;
+    }
+
     s_state = OTA_STATE_VERIFYING;
     ota_set_status("正在校验固件...");
 
@@ -172,7 +206,9 @@ static void ota_task(void *arg)
     handle = 0;
     if (err != ESP_OK)
     {
-        ota_fail(0, "固件完整性校验失败");
+        ESP_LOGE(TAG, "esp_ota_end failed: %d (downloaded %d bytes, content_len %d)",
+                 (int)err, total, content_len);
+        ota_fail(0, "固件无效或下载不完整");
         goto out;
     }
 
