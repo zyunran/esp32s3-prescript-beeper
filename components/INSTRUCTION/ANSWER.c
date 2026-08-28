@@ -6,6 +6,7 @@
 #include "ANSWER.h"
 #include "UI.h"
 #include "INSTRUCTION.h"   /* INS_Show 破译显示答案 */
+#include "evt.h"
 #include "esp_random.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -174,20 +175,26 @@ static void ans_list_load(uint8_t cat)
     ans_list_n[cat] = n;
 }
 
-static void ans_list_save(uint8_t cat)
+/* 序列化某分类答案为换行分隔文本(buf 须 ≥ ANS_TOTAL_MAX*ANS_LINE_MAX) */
+static void ans_serialize(uint8_t cat, char *buf, size_t cap)
+{
+    uint8_t i;
+    size_t wp = 0;
+    buf[0] = '\0';
+    for (i = 0; i < ans_list_n[cat]; i++)
+    {
+        if (wp >= cap - 1) break;
+        wp += (size_t)snprintf(&buf[wp], cap - wp, "%s%s",
+                               (i ? "\n" : ""), ans_list[cat][i]);
+    }
+}
+
+/* 立即落盘单分类(open + set/erase + commit) */
+static void ans_list_save_now(uint8_t cat)
 {
     nvs_handle_t h;
     static char buf[ANS_TOTAL_MAX * ANS_LINE_MAX];   /* static: 不占调用栈 */
-    uint8_t i;
-    size_t wp = 0;
-    buf[0] = '\0';   /* 先清空(static 首帧为 0, 但二次调用需重置) */
-    for (i = 0; i < ans_list_n[cat]; i++)
-    {
-        /* 带余量拼接: 缓冲只比最坏情况多 1B, 用 snprintf 防贴上限溢出 */
-        if (wp >= sizeof(buf) - 1) break;
-        wp += (size_t)snprintf(&buf[wp], sizeof(buf) - wp, "%s%s",
-                               (i ? "\n" : ""), ans_list[cat][i]);
-    }
+    ans_serialize(cat, buf, sizeof(buf));
     if (nvs_open("ans", NVS_READWRITE, &h) == ESP_OK)
     {
         if (buf[0]) nvs_set_str(h, ans_nvs_key(cat), buf);
@@ -195,6 +202,46 @@ static void ans_list_save(uint8_t cat)
         nvs_commit(h);
         nvs_close(h);
     }
+}
+
+/* 网页批量保存: Begin 后逐类只记脏掩码, End 合并为一次 open+commit */
+static uint8_t ans_save_batch = 0;
+static uint8_t ans_save_dirty = 0;   /* bit c = 分类 c 待落盘 */
+
+static void ans_list_save(uint8_t cat)
+{
+    if (ans_save_batch)
+    {
+        ans_save_dirty |= (uint8_t)(1u << cat);
+        return;
+    }
+    ans_list_save_now(cat);
+}
+
+void ANS_SaveBatchBegin(void) { ans_save_batch++; }
+
+void ANS_SaveBatchEnd(void)
+{
+    nvs_handle_t h;
+    static char buf[ANS_TOTAL_MAX * ANS_LINE_MAX];   /* static: 不占调用栈 */
+    uint8_t c, have = 0;
+    if (!ans_save_batch) return;
+    ans_save_batch--;
+    if (ans_save_batch || !ans_save_dirty) return;
+    if (nvs_open("ans", NVS_READWRITE, &h) == ESP_OK)
+    {
+        for (c = 0; c < ANS_CAT_N; c++)
+        {
+            if (!(ans_save_dirty & (1u << c))) continue;
+            ans_serialize(c, buf, sizeof(buf));
+            if (buf[0]) nvs_set_str(h, ans_nvs_key(c), buf);
+            else        nvs_erase_key(h, ans_nvs_key(c));   /* 空 = 恢复内置 */
+            have = 1;
+        }
+        if (have) nvs_commit(h);
+        nvs_close(h);
+    }
+    ans_save_dirty = 0;
 }
 
 /* ================= 内部 ================= */
@@ -249,17 +296,17 @@ void ANS_OnEvent(uint8_t evt)
 
     if (ans_state == ANS_MENU)
     {
-        if (evt == 1)                       /* UP */
+        if (evt == EVT_UP)                  /* 上 */
         {
             UI_SubMenuScroll(1);
             ans_cat_cur = UI_SubMenuCur();
         }
-        else if (evt == 3)                  /* DOWN */
+        else if (evt == EVT_DOWN)           /* 下 */
         {
             UI_SubMenuScroll(-1);
             ans_cat_cur = UI_SubMenuCur();
         }
-        else if (evt == 2)                  /* OK: 选分类(前4项)或退出(末项) */
+        else if (evt == EVT_OK)             /* 确认: 选分类(前4项)或退出(末项) */
         {
             uint8_t sel = UI_SubMenuCur();
             if (sel >= ANS_CAT_N)           /* 选"退出" -> 回主界面(重绘由主循环 ui_pop 统一做) */
@@ -272,18 +319,18 @@ void ANS_OnEvent(uint8_t evt)
                 ans_draw();
             }
         }
-        else if (evt == 4)                  /* 长按OK: 直接退出(重绘由主循环 ui_pop 统一做) */
+        else if (evt == EVT_LONG_OK)        /* 长按OK: 直接退出(重绘由主循环 ui_pop 统一做) */
         {
             ans_busy = 0;
         }
     }
     else /* ANS_DRAW: 答案已显示(破译由调用方 INS_Tick 推进) */
     {
-        if (evt == 1 || evt == 2 || evt == 3)   /* UP/OK/DOWN: 再抽一条(同分类) */
+        if (evt == EVT_UP || evt == EVT_OK || evt == EVT_DOWN)   /* 上/确认/下: 再抽一条(同分类) */
         {
             ans_draw();
         }
-        else if (evt == 4)                  /* 长按OK: 回分类子菜单 */
+        else if (evt == EVT_LONG_OK)        /* 长按OK: 回分类子菜单 */
         {
             ans_state = ANS_MENU;
             ans_menu_render();

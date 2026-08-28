@@ -38,19 +38,15 @@
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
+#include "evt.h"
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
 
-/* ================= 按键事件 =================
+/* ================= 按键事件(事件码定义在 COMMON/evt.h, 全工程唯一来源) =================
  * 注: 长按 OK=返回上一级; 连发参数改这里即可调整手感 */
-#define EVT_NONE     0
-#define EVT_UP       1
-#define EVT_OK       2
-#define EVT_DOWN     3
-#define EVT_LONG_OK  4    /* OK 长按(返回上一级) */
 /* 长按参数(改这里即可调整手感):
  *   LONG_PRESS_MS  = 判定"长按"的按住时长(超此即长按)
  *   REPEAT_PRESS_MS = 长按连发间隔(上下键按住后每隔此时间滚动一项) */

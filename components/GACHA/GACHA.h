@@ -74,7 +74,9 @@ const char *GACHA_CoinSinnerName(uint8_t i);  /* 第 i 个罪人名 */
 uint16_t GACHA_CoinSinnerOff(uint8_t i);      /* 第 i 罪人在人格表起始下标 */
 uint16_t GACHA_CoinSinnerCount(uint8_t i);    /* 第 i 罪人人格数 */
 
-/* 卡池数据(定义于 gacha_data.c, 由 gen_gacha.py 生成) */
+/* 卡池数据(定义于 gacha_data.c, 由 gen_gacha.py 生成).
+ * 金(★3)不在本表: 抽取路径走 coin_skills 统一表(gacha_pick_gold),
+ * 本表只含 灰(12)/红(52)/EGO(111), gacha_pool 的金槽 count=0 */
 extern const gacha_card_t gacha_cards[];
 extern const uint16_t gacha_pool_start[GACHA_RAR_COUNT]; /* 各稀有度在 gacha_cards 中的起始下标 */
 extern const uint16_t gacha_pool_count[GACHA_RAR_COUNT]; /* 各稀有度条目数 */

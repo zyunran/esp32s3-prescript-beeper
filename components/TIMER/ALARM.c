@@ -116,15 +116,39 @@ static uint32_t alm_today(void)
 
 /* ================= NVS 持久化 ================= */
 static const char *TAG = "ALM";
+static uint8_t alm_save_batch = 0;   /* >0=网页批量保存中: alm_save 延迟到批结束(一次保存原本逐槽 commit 最多 16 次) */
 static void alm_save(void)
 {
     nvs_handle_t h;
-    alm_lock();   /* 整表快照落盘与过路写串行(嵌套/递归调用安全) */
+    if (alm_save_batch) return;   /* 批量中: 只记延迟, ALM_SaveBatchEnd 统一写整表一次 */
+    alm_lock();
     if (nvs_open("alarm", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_blob(h, "alm", alm, sizeof(alm));
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "alarm nvs commit failed");
         nvs_close(h);
+    }
+    alm_unlock();
+}
+
+/* 网页批量保存: Begin 后 SetSlot/ClearSlot 只改 RAM, End 统一落盘一次 */
+void ALM_SaveBatchBegin(void) { alm_lock(); alm_save_batch++; alm_unlock(); }
+void ALM_SaveBatchEnd(void)
+{
+    alm_lock();
+    if (alm_save_batch)
+    {
+        alm_save_batch--;
+        if (alm_save_batch == 0)   /* 直接写整表(不递归进延迟分支) */
+        {
+            nvs_handle_t h;
+            if (nvs_open("alarm", NVS_READWRITE, &h) == ESP_OK)
+            {
+                nvs_set_blob(h, "alm", alm, sizeof(alm));
+                if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "alarm nvs commit failed");
+                nvs_close(h);
+            }
+        }
     }
     alm_unlock();
 }

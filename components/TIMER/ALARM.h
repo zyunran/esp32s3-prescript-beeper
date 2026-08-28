@@ -23,5 +23,7 @@ uint8_t ALM_Max(void);                                     /* 最大槽数 */
 void ALM_GetSlot(uint8_t i, uint8_t *en, uint8_t *hh, uint8_t *mm, uint8_t *days, uint8_t *once);
 void ALM_SetSlot(uint8_t i, uint8_t en, uint8_t hh, uint8_t mm, uint8_t days, uint8_t once); /* 写槽并持久化 */
 void ALM_ClearSlot(uint8_t i);                                /* 清空槽位(删除闹钟)并持久化 */
+void ALM_SaveBatchBegin(void);                                /* 网页批量保存开始: 写槽只改 RAM 不落盘 */
+void ALM_SaveBatchEnd(void);                                  /* 批量结束: 闹钟表统一落盘一次(配对调用) */
 
 #endif

@@ -9,6 +9,7 @@
 #include "MPU6050.h"
 #include "ORACLE.h"
 #include "GACHA.h"
+#include "evt.h"
 #include "esp_app_desc.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
@@ -30,6 +31,7 @@ static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
 static uint8_t  set_theme = 0;              /* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑白 */
 static uint32_t set_boot_count = 0;         /* 开机次数(NVS "info") */
+static uint8_t  set_save_batch = 0;         /* >0=网页批量保存中: settings_save 延迟到批结束 */
 
 static const uint16_t set_timeout_opt[] = { 30, 60, 300, 0 };
 static const char *set_timeout_name[] = { "30秒", "1分", "5分", "永" };
@@ -62,6 +64,7 @@ static const char *settings_items[SET_IDX_COUNT];
 static void settings_save(void)
 {
     nvs_handle_t h;
+    if (set_save_batch) return;   /* 批量保存中: 只记延迟, 批结束统一写一次(网页一次保存原本触发 9 次 commit) */
     if (nvs_open("set", NVS_READWRITE, &h) == ESP_OK)
     {
         nvs_set_u16(h, "to", set_timeout_sec);
@@ -76,6 +79,16 @@ static void settings_save(void)
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "settings nvs commit failed");
         nvs_close(h);
     }
+}
+
+/* 网页批量保存: Begin 后所有 SET_Set* 只改 RAM, End 统一落盘一次.
+ * settings_save 写全部设置键, 延迟到批结束等价于最终状态一次写入 */
+void SET_SaveBatchBegin(void) { set_save_batch++; }
+void SET_SaveBatchEnd(void)
+{
+    if (!set_save_batch) return;
+    set_save_batch--;
+    if (set_save_batch == 0) settings_save();
 }
 
 void SET_Init(void)
@@ -455,14 +468,14 @@ void SET_ShowInfo(void)
     set_info_render();
 }
 
-void SET_InfoNav(uint8_t evt)   /* evt: 1=UP 2=OK 3=DOWN(与 main.c EVT_* 一致) */
+void SET_InfoNav(uint8_t evt)   /* evt: EVT_UP/EVT_DOWN(COMMON/evt.h) */
 {
-    if (evt == 1 && set_info_page > 0)            /* UP: 上一页 */
+    if (evt == EVT_UP && set_info_page > 0)       /* 上: 上一页 */
     {
         set_info_page--;
         set_info_render();
     }
-    else if (evt == 3)                             /* DOWN: 下一页(循环) */
+    else if (evt == EVT_DOWN)                      /* 下: 下一页(循环) */
     {
         set_info_page = (uint8_t)((set_info_page + 1) % SET_INFO_PAGES);
         set_info_render();

@@ -37,5 +37,7 @@ uint8_t ANS_Busy(void);                          /* 1=询问界面运行中 */
 /* 答案库访问(网页用) */
 const char *ANS_Custom(uint8_t cat);             /* 该分类【全部】答案整串文本(换行分隔; 无 NVS 覆盖=内置默认) */
 void ANS_FromText(uint8_t cat, const char *text);/* 网页覆盖整类答案(NVS, 每行一条; 空串=清空恢复内置) */
+void ANS_SaveBatchBegin(void);                   /* 网页批量保存开始: 逐类只记脏掩码不落盘 */
+void ANS_SaveBatchEnd(void);                     /* 批量结束: 脏分类合并为一次 open+commit(配对调用) */
 
 #endif

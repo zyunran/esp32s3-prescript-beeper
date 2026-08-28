@@ -37,10 +37,21 @@ void spi2_init(void)
 
 void spi2_write_data(uint8_t *data, int len)
 {
+    esp_err_t err;
     spi_transaction_t t = {0};
 
     if (!spi2_handle || !data || len <= 0) return;   /* 防悬垂句柄/空参数 */
-    t.length = len * 8;                            
-    t.tx_buffer = data;                            
-    spi_device_polling_transmit(spi2_handle, &t);  
+    t.length = len * 8;
+    t.tx_buffer = data;
+    err = spi_device_polling_transmit(spi2_handle, &t);
+    if (err != ESP_OK)
+    {
+        static uint8_t logged = 0;   /* 整屏 11 块/帧, 失败会连发: 只记首条, 防无声丢帧 */
+        if (!logged)
+        {
+            ESP_LOGE(TAG, "polling_transmit failed: %s (帧内容可能缺失, 重绘自愈)",
+                     esp_err_to_name(err));
+            logged = 1;
+        }
+    }
 }

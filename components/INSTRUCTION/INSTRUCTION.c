@@ -678,8 +678,11 @@ void INS_GetParams(uint16_t *def, uint16_t *gb, uint16_t *dl, uint16_t *rv)
 
 void INS_SetParams(uint16_t def, uint16_t gb, uint16_t dl, uint16_t rv)
 {
+    /* 下限防太快来不及画, 上限防恶意/误输超长间隔把乱码动画卡住(网页上限 dl=100/rv=300, 服务端放宽一档) */
     if (dl < 5) dl = 5;
+    if (dl > 500) dl = 500;
     if (rv < 10) rv = 10;
+    if (rv > 1000) rv = 1000;
     ins_lock();                                   /* 与 UI 破译解析读参互斥(整体更新不撕裂) */
     INS_SCR_DEFAULT = def;
     INS_SCR_GARBLE = gb;

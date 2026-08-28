@@ -18,73 +18,97 @@ static const char *TAG = "SOUND";
 
 static i2s_chan_handle_t snd_tx;
 static SemaphoreHandle_t snd_sem;       /* 唤醒播放任务 */
-/* 以下播放状态由调用任务(ui_task: Play/PlayLoop/Stop/SetVolume)与 snd_task 跨任务共享:
- *  - volatile: 防编译器把代次/指针/音量缓存在寄存器导致无限循环或读到陈旧值(M3)
- *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次
- *  - snd_pending: 1=有一次待消费的播放请求(give 后、代次捕获前 Stop 会把代次"吞"掉,
- *    播放任务醒来后据此判定该次唤醒已被 Stop 作废, 直接回信号量重等, 防循环音停不掉) */
-static const int16_t * volatile snd_pcm;  /* 待播缓冲 */
-static volatile uint32_t snd_frames;
-static volatile uint8_t  snd_loop;        /* 1=循环播放直到 SOUND_Stop */
+/* 播放请求经长度 1 的队列(xQueueOverwrite)传递: FreeRTOS 拷贝语义 = 原子快照,
+ * 消除旧实现 snd_pcm/snd_frames/snd_loop 三处独立 volatile 存储在双核下
+ * "第二次 Play 的指针与旧帧数错配"的数据竞争(以旧长度播新缓冲). */
+typedef struct {
+    const int16_t *pcm;
+    uint32_t frames;
+    uint8_t loop;                       /* 1=循环播放直到 Stop/被打断的单次音恢复 */
+} snd_req_t;
+static QueueHandle_t snd_q = NULL;      /* 长度 1: 覆盖写(后到请求顶掉未消费的, 与旧覆盖语义一致) */
 static volatile uint16_t snd_gen;         /* 播放代次: Play/Stop 时递增, 任务据此即时切换/停止 */
 static volatile uint8_t  snd_pending;     /* 1=有待播请求(Play 置1; Stop 清0; 任务消费后清0) */
+static volatile uint8_t  snd_loop_active = 0;    /* 最近发布的请求是循环音(PlayLoop 置1 / Play·Stop 清0) */
+static volatile uint8_t  snd_loop_suspended = 0; /* 1=循环进行音被单次音(按键音等)打断, 播完自动恢复 */
+static snd_req_t snd_loop_cur;            /* 当前循环音参数(恢复用); ui_task 写, 任务在恢复时读 */
+/* 以下播放状态由调用任务(ui_task: Play/PlayLoop/Stop/SetVolume)与 snd_task 跨任务共享:
+ *  - volatile: 防编译器把代次/音量缓存在寄存器导致无限循环或读到陈旧值(M3)
+ *  - snd_gen 用 uint16: 播/停满 256 次即回绕的 uint8 会在 "gen==snd_gen" 判定上误判代次 */
 static volatile uint8_t  snd_vol = 100;   /* 音量 0~100(默认满; WEB/设置任务可改, 播放任务缩放时读) */
 static int16_t snd_scratch[1024];       /* 音量缩放暂存(与写入块 2048B 对应) */
 
-/* 播放任务: 收到信号量后写入 PCM; 代次变化(新 Play/Stop)则立即中止当前缓冲 */
+/* 播放任务: 收到信号量后从队列取请求写入 PCM; 代次变化(新 Play/Stop)则立即中止当前缓冲 */
 static void snd_task(void *arg)
 {
     for (;;)
     {
+        snd_req_t r;
         xSemaphoreTake(snd_sem, portMAX_DELAY);
-        uint16_t gen = snd_gen;
         if (!snd_pending)
         {
-            continue;   /* 该次唤醒已被 Stop 作废(Play 后被 Stop, give 与捕获之间): 回信号量重等 */
+            continue;   /* 该次唤醒已被 Stop 作废(Play 后被 Stop, give 与消费之间): 回信号量重等 */
         }
         snd_pending = 0;   /* 消费本次请求; 此后播放中的停止由块间 gen 检查生效 */
-        do
+        xQueueReceive(snd_q, &r, 0);
+        for (;;)
         {
-            uint8_t *p = (uint8_t *)snd_pcm;
-            uint32_t bytes = snd_frames * 2, written = 0;
-            while (written < bytes && gen == snd_gen)
+            /* resume=1: 本段(单次音)播完且需切换到被打断的循环音 —— continue 回 for 顶层,
+             * mygen/p/bytes/written 按新请求全部重置 */
+            uint8_t resume = 0;
+            uint16_t mygen = snd_gen;
+            do
             {
-                uint32_t n = (bytes - written > 2048) ? 2048 : (bytes - written);
-                size_t w = 0;
-                if (snd_vol >= 100)
+                uint8_t *p = (uint8_t *)r.pcm;
+                uint32_t bytes = r.frames * 2, written = 0;   /* 循环音每轮重播都要重置, 须在 do 体内 */
+                while (written < bytes && mygen == snd_gen)
                 {
-                    /* 满音量: 直接写原始数据 */
-                    if (i2s_channel_write(snd_tx, p + written, n, &w, portMAX_DELAY) != ESP_OK)
+                    uint32_t n = (bytes - written > 2048) ? 2048 : (bytes - written);
+                    size_t w = 0;
+                    if (snd_vol >= 100)
                     {
-                        written = bytes;
-                        snd_gen++;   /* 写失败: 终止本段并让外层 do-while 退出, 回信号量等待(防 PlayLoop 自旋饿死 UI) */
-                        break;
+                        /* 满音量: 直接写原始数据 */
+                        if (i2s_channel_write(snd_tx, p + written, n, &w, portMAX_DELAY) != ESP_OK)
+                        {
+                            written = bytes;
+                            snd_gen++;   /* 写失败: 提前终止, 防 PlayLoop 自旋饿死 UI */
+                            break;
+                        }
                     }
+                    else
+                    {
+                        /* 缩放音量: 逐采样 *vol/100 写入暂存 */
+                        const int16_t *src = (const int16_t *)(p + written);
+                        uint16_t ns = (uint16_t)(n / 2), i;
+                        int32_t v = snd_vol;
+                        for (i = 0; i < ns; i++)
+                        {
+                            int32_t s = (int32_t)src[i] * v / 100;
+                            if (s > 32767) s = 32767;
+                            else if (s < -32768) s = -32768;
+                            snd_scratch[i] = (int16_t)s;
+                        }
+                        if (i2s_channel_write(snd_tx, snd_scratch, n, &w, portMAX_DELAY) != ESP_OK)
+                        {
+                            written = bytes;
+                            snd_gen++;   /* 同满音量路径: 写失败即终止, 防自旋 */
+                            break;
+                        }
+                    }
+                    written += w;
                 }
-                else
-                {
-                    /* 缩放音量: 逐采样 *vol/100 写入暂存 */
-                    const int16_t *src = (const int16_t *)(p + written);
-                    uint16_t ns = (uint16_t)(n / 2), i;
-                    int32_t v = snd_vol;
-                    for (i = 0; i < ns; i++)
-                    {
-                        int32_t s = (int32_t)src[i] * v / 100;
-                        if (s > 32767) s = 32767;
-                        else if (s < -32768) s = -32768;
-                        snd_scratch[i] = (int16_t)s;
-                    }
-                    if (i2s_channel_write(snd_tx, snd_scratch, n, &w, portMAX_DELAY) != ESP_OK)
-                    {
-                        written = bytes;
-                        snd_gen++;   /* 同满音量路径: 写失败即终止, 防自旋 */
-                        break;
-                    }
-                }
-                written += w;
+            } while (r.loop && mygen == snd_gen);   /* 循环音: 整段反复, 直到 Stop/新请求 */
+            if (mygen != snd_gen) break;            /* 代次已变: 不恢复, 回信号量等待 */
+            if (!r.loop && snd_loop_suspended) resume = 1;   /* 单次音(按键音)播完: 恢复被打断的循环进行音 */
+            if (resume)
+            {
+                r = snd_loop_cur;
+                snd_loop_suspended = 0;
+                snd_loop_active = 1;
+                continue;
             }
-        } while (snd_loop && gen == snd_gen);
-        /* 本帧播完或代次已变: 回到信号量等待, 不再引用旧缓冲 */
+            break;   /* 播完或被打断: 回信号量等待, 不再引用旧缓冲 */
+        }
     }
 }
 
@@ -132,6 +156,12 @@ void SOUND_Init(void)
     gpio_set_level(SOUND_SD, 1);
 
     snd_sem = xSemaphoreCreateCounting(1, 0);
+    snd_q = xQueueCreate(1, sizeof(snd_req_t));
+    if (!snd_q)
+    {
+        ESP_LOGE(TAG, "snd queue create failed");
+        return;
+    }
     xTaskCreate(snd_task, "sound", 4096, NULL, 4, NULL);
 }
 
@@ -142,37 +172,53 @@ void SOUND_SetVolume(uint8_t percent)
     gpio_set_level(SOUND_SD, (snd_vol > 0) ? 1 : 0);
 }
 
-void SOUND_Play(const int16_t *pcm, uint32_t frames)   /* 一次性播放(当前调用方未用; 保留: 将来短音效/提示音入口) */
+/* 发布请求到队列(覆盖写)并唤醒任务; 供 Play/PlayLoop 共用 */
+static void snd_publish(const int16_t *pcm, uint32_t frames, uint8_t loop)
 {
-    if (!snd_sem || !pcm || frames == 0)
+    snd_req_t r = { pcm, frames, loop };
+    snd_gen++;
+    if (loop)
+    {
+        snd_loop_cur = r;          /* 循环音参数存底: 被单次音打断后据此恢复 */
+        snd_loop_active = 1;
+        snd_loop_suspended = 0;
+    }
+    else if (snd_loop_active && !snd_loop_suspended)
+    {
+        snd_loop_suspended = 1;    /* 单次音打断循环进行音: 播完自动恢复 */
+    }
+    else if (!loop)
+    {
+        snd_loop_active = 0;
+    }
+    snd_pending = 1;   /* 置请求标志后再 give: 任务醒来先查 pending, 防 Stop 夹在中间把本次播放作废 */
+    xQueueOverwrite(snd_q, &r);
+    xSemaphoreGive(snd_sem);
+}
+
+void SOUND_Play(const int16_t *pcm, uint32_t frames)   /* 一次性播放(按键音/音效; 会临时打断循环音并自动恢复) */
+{
+    if (!snd_sem || !snd_q || !pcm || frames == 0)
     {
         return;
     }
-    snd_gen++;
-    snd_pcm = pcm;
-    snd_frames = frames;
-    snd_loop = 0;
-    snd_pending = 1;   /* 置请求标志后再 give: 任务醒来先查 pending, 防 Stop 夹在中间把本次播放作废 */
-    xSemaphoreGive(snd_sem);
+    snd_publish(pcm, frames, 0);
 }
 
 void SOUND_PlayLoop(const int16_t *pcm, uint32_t frames)
 {
-    if (!snd_sem || !pcm || frames == 0)
+    if (!snd_sem || !snd_q || !pcm || frames == 0)
     {
         return;
     }
-    snd_gen++;
-    snd_pcm = pcm;
-    snd_frames = frames;
-    snd_loop = 1;
-    snd_pending = 1;
-    xSemaphoreGive(snd_sem);
+    snd_publish(pcm, frames, 1);
 }
 
 void SOUND_Stop(void)
 {
     snd_pending = 0;    /* 作废未消费的播放请求: 任务即使刚被 give 唤醒也直接重等 */
     snd_gen++;          /* 代次+1: 播放任务立即中止当前缓冲 */
+    snd_loop_active = 0;
+    snd_loop_suspended = 0;   /* 连循环恢复一起作废: Stop 是显式停, 不该再续上 */
 }
 

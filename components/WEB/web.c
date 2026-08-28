@@ -18,6 +18,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_random.h"
 #include "cJSON.h"
 #include "LCD.h"
 #include "UI.h"
@@ -43,6 +44,20 @@ static const char *TAG = "WEB";
 /* 凭据脱敏掩码: /api/cfg 不回传 WiFi 密码/天气 key 明文(该端口 LAN 内任意设备可访问);
  * 配置页以掩码占位, 保存时遇到该串视为"保持不变", 不覆盖已存凭据 */
 #define WEB_SECRET_MASK "********"
+
+/* ================= CSRF token =================
+ * POST 接口须携带首页 GET /api/token 下发的 token(请求头 X-Web-Token).
+ * 原理: 浏览器同源策略下, 恶意网页可以向设备发跨源 POST(简单请求不预检),
+ * 但读不到跨源响应体 —— 拿不到 token 即无法伪造有效写请求 */
+static char web_token[17] = "";
+
+static uint8_t web_token_ok(httpd_req_t *req)
+{
+    char hdr[40];
+    if (web_token[0] == '\0') return 1;   /* 未生成(不应发生): 放行, 不因防护引入全拒 */
+    if (httpd_req_get_hdr_value_str(req, "X-Web-Token", hdr, sizeof(hdr)) != ESP_OK) return 0;
+    return strcmp(hdr, web_token) == 0;
+}
 
 /* 配置已改标志: 网页保存配置/待办后置 1, ui_task 检测后重绘主界面应用(实时生效+绘制统一避免并发).
  * httpd 任务写、ui_task 读/清: volatile 防跨核缓存(单字节写读本原子) */
@@ -211,28 +226,31 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
     }
     cJSON_AddItemToObject(root, "colors", colors);
 
+    /* 指令库读出缓冲放堆(2×4.4KB): 原栈上两块共 8.8KB, httpd 16KB 栈余量只剩一半 */
     {
-        char ins_buf[INS_PRESET_MAX][INS_PRESET_LEN];
-        if (INS_PresetsEx(0, ins_buf, INS_PRESET_MAX, &n))   /* 普通指令库(始终读普通, 不随字号变) */
+        char (*ins_buf)[INS_PRESET_LEN] = malloc(sizeof(char[INS_PRESET_MAX][INS_PRESET_LEN]));
+        if (ins_buf && INS_PresetsEx(0, ins_buf, INS_PRESET_MAX, &n))   /* 普通指令库(始终读普通, 不随字号变) */
         {
             for (i = 0; i < n; i++)
             {
                 cJSON_AddItemToArray(ins, cJSON_CreateString(ins_buf[i]));
             }
         }
+        free(ins_buf);
     }
     cJSON_AddItemToObject(root, "ins", ins);
 
     {
         cJSON *ins64 = cJSON_CreateArray();
-        char ins64_buf[INS_PRESET_MAX][INS_PRESET_LEN];
-        if (INS_PresetsEx(3, ins64_buf, INS_PRESET_MAX, &n))   /* 64 大字指令库 */
+        char (*ins64_buf)[INS_PRESET_LEN] = malloc(sizeof(char[INS_PRESET_MAX][INS_PRESET_LEN]));
+        if (ins64_buf && INS_PresetsEx(3, ins64_buf, INS_PRESET_MAX, &n))   /* 64 大字指令库 */
         {
             for (i = 0; i < n; i++)
             {
                 cJSON_AddItemToArray(ins64, cJSON_CreateString(ins64_buf[i]));
             }
         }
+        free(ins64_buf);
         cJSON_AddItemToObject(root, "ins64", ins64);
     }
 
@@ -683,8 +701,8 @@ static int web_apply_decode(cJSON *root)
             if (!def || !gb || !cJSON_IsString(def) || !cJSON_IsString(gb) ||
                 !web_hex_color_valid(def->valuestring) || !web_hex_color_valid(gb->valuestring)) return 0;
         }
-        if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5)) return 0;
-        if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10)) return 0;
+        if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5 || dl->valueint > 500)) return 0;
+        if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10 || rv->valueint > 1000)) return 0;
         if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 3)) return 0;
         if (def && gb)
         {
@@ -824,8 +842,8 @@ static int web_cfg_validate(cJSON *root)
             if (!def || !gb || !cJSON_IsString(def) || !cJSON_IsString(gb) ||
                 !web_hex_color_valid(def->valuestring) || !web_hex_color_valid(gb->valuestring)) return 0;
         }
-        if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5)) return 0;
-        if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10)) return 0;
+        if (dl && (!cJSON_IsNumber(dl) || dl->valueint < 5 || dl->valueint > 500)) return 0;
+        if (rv && (!cJSON_IsNumber(rv) || rv->valueint < 10 || rv->valueint > 1000)) return 0;
         if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 3)) return 0;
     }
     cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
@@ -889,6 +907,11 @@ static char *web_recv_body(httpd_req_t *req, int max_len)
 static esp_err_t web_api_cfg_post(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     char *buf = web_recv_body(req, 32768);   /* 含指令库+答案文本框+闹钟, 上限 32KB */
     if (!buf)
     {
@@ -911,17 +934,28 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* 按配置项逐个应用(已整体校验通过, apply 链不会半路失败) */
+    /* 按配置项逐个应用(已整体校验通过, apply 链不会半路失败).
+     * NVS 写合并: 设置/闹钟/答案在批内只改 RAM, 批结束各统一落盘一次 ——
+     * 一次保存原本触发 25~37 次 commit, 合并后 ≤8 次, POST 耗时与 flash 磨损同降 */
+    SET_SaveBatchBegin();
+    ALM_SaveBatchBegin();
+    ANS_SaveBatchBegin();
     if (!web_apply_colors(root) || !web_apply_ins(root) || !web_apply_ans(root) ||
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||
         !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) ||
         !web_apply_theme(root) || !web_apply_ins64(root) || !web_apply_ota(root) || !web_apply_decode(root))
     {
+        SET_SaveBatchEnd();   /* 失败也要收批: 已应用的 RAM 改动落盘(与旧"部分立即落库"行为一致) */
+        ALM_SaveBatchEnd();
+        ANS_SaveBatchEnd();
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid field");
         return ESP_OK;
     }
+    SET_SaveBatchEnd();
+    ALM_SaveBatchEnd();
+    ANS_SaveBatchEnd();
 
     cJSON_Delete(root);
     web_dirty = 1;   /* 通知 ui_task 重绘主界面(主题色/使用者实时生效) */
@@ -931,24 +965,66 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* 扫描附近 WiFi(供配置页点击选择, 免手输 SSID) */
+/* ---- WiFi 扫描异步化: POST 启动后台任务, GET /api/scanres 轮询结果 ----
+ * 旧实现 POST 内同步阻塞扫描 2~4s: esp_http_server 单任务服务全部连接,
+ * 扫描期间网页的保存/状态轮询全部排队。现拆为两段, 页面轮询直至完成 */
+#define WEB_SCAN_MAX 20
+static char scan_ssids[WEB_SCAN_MAX][33];
+static int8_t scan_rssi[WEB_SCAN_MAX];
+static uint8_t scan_enc[WEB_SCAN_MAX];
+static uint8_t scan_n = 0;
+static volatile uint8_t scan_busy = 0;   /* httpd 任务置 1 启动, 扫描任务写完结果后清 0 */
+
+static void web_scan_task(void *arg)
+{
+    scan_n = NET_ScanWifi(WEB_SCAN_MAX, scan_ssids, scan_rssi, scan_enc);
+    scan_busy = 0;   /* 结果全部写完才清: 读侧以 busy=0 为快照完成信号 */
+    vTaskDelete(NULL);
+}
+
+/* POST /api/scan: 启动后台扫描(已在扫则忽略, 防任务堆积), 立即响应 */
 static esp_err_t web_api_scan(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
-    enum { SCAN_MAX = 20 };
-    char ssids[SCAN_MAX][33];
-    int8_t rssi[SCAN_MAX];
-    uint8_t enc[SCAN_MAX];
-    uint8_t n = NET_ScanWifi(SCAN_MAX, ssids, rssi, enc), i;
-    cJSON *root = cJSON_CreateObject();
-    cJSON *arr = cJSON_AddArrayToObject(root, "wifi_list");
-    for (i = 0; i < n; i++)
+    if (!web_token_ok(req))
     {
-        cJSON *w = cJSON_CreateObject();
-        cJSON_AddStringToObject(w, "ssid", ssids[i]);
-        cJSON_AddNumberToObject(w, "rssi", rssi[i]);
-        cJSON_AddNumberToObject(w, "encrypted", enc[i]);
-        cJSON_AddItemToArray(arr, w);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
+    if (!scan_busy)
+    {
+        scan_busy = 1;
+        if (xTaskCreate(web_scan_task, "webscan", 4096, NULL, 3, NULL) != pdPASS)
+        {
+            scan_busy = 0;   /* 任务创建失败: 复位, 下次再试 */
+        }
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"scanning\":1}");
+    return ESP_OK;
+}
+
+/* GET /api/scanres: 轮询扫描结果; 扫描中 {"busy":1}, 完成后返回 wifi_list(同旧格式) */
+static esp_err_t web_api_scanres(httpd_req_t *req)
+{
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    cJSON *root = cJSON_CreateObject();
+    if (scan_busy)
+    {
+        cJSON_AddNumberToObject(root, "busy", 1);
+    }
+    else
+    {
+        cJSON *arr = cJSON_AddArrayToObject(root, "wifi_list");
+        uint8_t i;
+        for (i = 0; i < scan_n; i++)
+        {
+            cJSON *w = cJSON_CreateObject();
+            cJSON_AddStringToObject(w, "ssid", scan_ssids[i]);
+            cJSON_AddNumberToObject(w, "rssi", scan_rssi[i]);
+            cJSON_AddNumberToObject(w, "encrypted", scan_enc[i]);
+            cJSON_AddItemToArray(arr, w);
+        }
     }
     char *out = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
@@ -1053,6 +1129,11 @@ static esp_err_t web_api_todo_get(httpd_req_t *req)
 static esp_err_t web_api_todo_post(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     char *buf = web_recv_body(req, 2048);
     cJSON *root, *op, *text, *idx;
     if (!buf)
@@ -1154,6 +1235,11 @@ static portMUX_TYPE web_mux = portMUX_INITIALIZER_UNLOCKED;
 static esp_err_t web_api_send(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     char *buf = web_recv_body(req, 2048);
     cJSON *root, *cmd;
     if (!buf)
@@ -1210,6 +1296,11 @@ uint8_t WEB_TakeCmd(char *buf, size_t n)
 static esp_err_t web_api_beep(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     BUZZER_Beep(1);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -1220,6 +1311,11 @@ static esp_err_t web_api_beep(httpd_req_t *req)
 static esp_err_t web_api_reboot(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
     vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -1231,6 +1327,11 @@ static esp_err_t web_api_reboot(httpd_req_t *req)
 static esp_err_t web_api_user_add(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     char *buf = web_recv_body(req, 512);
     if (!buf)
     {
@@ -1260,6 +1361,11 @@ static esp_err_t web_api_user_add(httpd_req_t *req)
 static esp_err_t web_api_clearwifi(httpd_req_t *req)
 {
     NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
     NET_ClearWifi();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -1276,15 +1382,34 @@ static esp_err_t web_captive(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* GET /api/token: 下发 CSRF token(页面加载时取一次, 所有 POST 以 X-Web-Token 头回传).
+ * 同源策略保证恶意网页读不到本响应, 拿不到 token 即无法伪造写请求 */
+static esp_err_t web_api_token(httpd_req_t *req)
+{
+    char out[40];
+    snprintf(out, sizeof(out), "{\"token\":\"%s\"}", web_token);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+
 /* ================= 入口 ================= */
 void WEB_Init(void)
 {
     web_colors_load();   /* 加载持久化主题色 */
 
+    /* CSRF token: 每次开机随机生成 16 位 hex */
+    {
+        uint32_t a = esp_random(), b = esp_random();
+        snprintf(web_token, sizeof(web_token), "%08lx%08lx",
+                 (unsigned long)a, (unsigned long)b);
+    }
+
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 16384;          /* 大栈: 解析 + 大JSON响应 */
-    cfg.max_uri_handlers = 24;       /* 主13 + captive portal 探测 7 + 余量 */
-    cfg.max_open_sockets = 4;        /* 单手机够用, 少占堆 */
+    cfg.max_uri_handlers = 24;       /* 主15 + captive portal 探测 7 + 余量 */
+    cfg.max_open_sockets = 6;        /* 页面尾部 4 个并发 fetch + captive portal 探测 + 余量(lru 清最旧) */
     cfg.lru_purge_enable = true;
     httpd_handle_t server = NULL;
 
@@ -1308,6 +1433,8 @@ void WEB_Init(void)
     httpd_uri_t r11 = { .uri = "/api/status", .method = HTTP_GET, .handler = web_api_status,      .user_ctx = NULL };
     httpd_uri_t r12 = { .uri = "/api/user",   .method = HTTP_POST, .handler = web_api_user_add,   .user_ctx = NULL };
     httpd_uri_t r13 = { .uri = "/api/clearwifi", .method = HTTP_POST, .handler = web_api_clearwifi, .user_ctx = NULL };
+    httpd_uri_t r14 = { .uri = "/api/token",    .method = HTTP_GET,  .handler = web_api_token,      .user_ctx = NULL };
+    httpd_uri_t r15 = { .uri = "/api/scanres",  .method = HTTP_GET,  .handler = web_api_scanres,    .user_ctx = NULL };
     httpd_register_uri_handler(server, &r1);
     httpd_register_uri_handler(server, &r2);
     httpd_register_uri_handler(server, &r3);
@@ -1321,6 +1448,8 @@ void WEB_Init(void)
     httpd_register_uri_handler(server, &r11);
     httpd_register_uri_handler(server, &r12);
     httpd_register_uri_handler(server, &r13);
+    httpd_register_uri_handler(server, &r14);
+    httpd_register_uri_handler(server, &r15);
 
     /* captive portal 探测路径(安卓/iOS/Windows): 全返回配置页, 手机连热点自动弹出 */
     {

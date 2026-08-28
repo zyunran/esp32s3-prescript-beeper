@@ -49,6 +49,8 @@ void SET_SetOracleWin(uint8_t idx);        /* 设神谕时段索引并保存 */
 void SET_SetCursor(uint8_t style);         /* 设光标样式并保存(UI_CURSOR_*) */
 void SET_ShowInfo(void);                   /* 全屏系统信息页(3 页: 系统/签收/战绩, 上下键翻页) */
 void SET_InfoNav(uint8_t evt);             /* 系统信息页翻页(1=UP 3=DOWN, 与 main.c EVT_* 一致) */
+void SET_SaveBatchBegin(void);             /* 网页批量保存开始: SET_Set* 只改 RAM 不落盘 */
+void SET_SaveBatchEnd(void);               /* 批量结束: 全部设置统一落盘一次(配对调用, 可嵌套) */
 
 void SET_SubmenuEnter(void);               /* 生成设置项并初始化子菜单 */
 uint8_t SET_SubmenuCount(void);            /* 设置项数(含"退出") */

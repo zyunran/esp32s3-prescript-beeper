@@ -7,6 +7,7 @@
  *    (安装/握持姿态不同方向可能反, 见 mpu_shake 互换说明) */
 #include "MPU6050.h"
 #include "UI.h"
+#include "evt.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
@@ -196,6 +197,14 @@ static uint8_t mpu_burst(uint8_t reg, uint8_t *buf, uint8_t n)
 /* ================= 初始化 / 探活 ================= */
 static volatile uint8_t mpu_ok = 0;   /* 采样任务写, UI/平衡页跨任务读(volatile 防缓存旧值) */
 
+/* WHO_AM_I 兼容白名单: 0x68/0x69=MPU6050(AD0 低/高), 0x70=MPU6500, 0x71/0x73=MPU9250.
+ * 本驱动只用 accel/gyro(WHO_AM_I 后的寄存器映射兼容), 市面廉价模块常用兼容芯片,
+ * 旧判定 (id&0xFE)==0x68 会把 clone 一律误判"未连接传感器" */
+static uint8_t mpu_id_ok(uint8_t id)
+{
+    return (id == 0x68 || id == 0x69 || id == 0x70 || id == 0x71 || id == 0x73);
+}
+
 /* 探测从机地址(0x68=AD0低, 0x69=AD0高)并用 WHO_AM_I 校验 */
 static uint8_t mpu_probe_addr(void)
 {
@@ -204,7 +213,7 @@ static uint8_t mpu_probe_addr(void)
     {
         mpu_addr_w = (uint8_t)(MPU_ADDR_W | (a ? 0x02 : 0x00));   /* 0xD0 / 0xD2 */
         mpu_addr_r = (uint8_t)(mpu_addr_w | 0x01);
-        if (mpu_read_reg(REG_WHO_AM_I, &id) == 0 && (id & 0xFE) == 0x68)   /* WHO_AM_I bit0 随 AD0(0x68/0x69) */
+        if (mpu_read_reg(REG_WHO_AM_I, &id) == 0 && mpu_id_ok(id))
         {
             return 1;
         }
@@ -234,7 +243,7 @@ static void mpu_probe(void)
     mpu_write_reg(REG_ACCEL_CONFIG, 0x00);    /* 加速度 ±2g */
 
     /* 配置生效校验: 读回 PWR_MGMT_1 应为 0x01(非休眠 0x40) */
-    if (mpu_read_reg(REG_WHO_AM_I, &id) != 0 || (id & 0xFE) != 0x68) mpu_ok = 0;
+    if (mpu_read_reg(REG_WHO_AM_I, &id) != 0 || !mpu_id_ok(id)) mpu_ok = 0;
     mpu_read_reg(REG_PWR_MGMT_1, &pm1);
     if (pm1 & 0x40) mpu_ok = 0;
 
@@ -314,10 +323,7 @@ float MPU_Yaw(void)    { return f_yaw; }
 #define STILL_VERT     (0.25f * ACCEL_G)     /* 静止判定: 竖直加速度阈值 g */
 #define STILL_GYRO     45.0f                 /* 静止判定: 角速度阈值 °/s(与上下摇阈值一致) */
 #define STILL_MS       60u                   /* 需连续静止时长 ms */
-#define EVT_UP         1                     /* 与 main.c 按键事件一致 */
-#define EVT_OK         2
-#define EVT_DOWN       3
-#define EVT_LONG_OK    4
+/* EVT_UP/OK/DOWN/LONG_OK 事件码统一取自 COMMON/evt.h(旧为本地复制, 与 main.c 漂移会静默错位) */
 
 static QueueHandle_t mpu_q = NULL;
 static TaskHandle_t  mpu_task_h = NULL;       /* 采样任务句柄 */
