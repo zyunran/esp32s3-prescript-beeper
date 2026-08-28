@@ -26,6 +26,7 @@
 #include "BUZZER.h"
 #include "ALARM.h"
 #include "NET.h"
+#include "CLOUD.h"
 #include "SETTING.h"
 #include "GACHA.h"
 #include "TODO.h"
@@ -1394,6 +1395,95 @@ static esp_err_t web_api_token(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* ================= 云端(OneNET)配置 ================= */
+/* 三元组字符集白名单: pid/name 仅 [A-Za-z0-9_-](OneNET 命名规则), key 另允许 base64 的 +/=;
+ * 保证可安全回显进 JSON 与拼接进 topic($sys/{pid}/{name}/...) */
+static uint8_t cloud_str_ok(const char *s, size_t max, uint8_t base64set)
+{
+    size_t i;
+    if (!s || strlen(s) >= max) return 0;
+    for (i = 0; s[i]; i++)
+    {
+        char ch = s[i];
+        uint8_t ok = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                     (ch >= '0' && ch <= '9') || ch == '-' || ch == '_';
+        if (!ok && base64set) ok = (ch == '+' || ch == '/' || ch == '=');
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
+/* GET /api/cloud: 「远程在线」开关+三元组; key 不回传明文(掩码=已配置, 保存时保持) */
+static esp_err_t web_api_cloud_get(httpd_req_t *req)
+{
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    cloud_cfg_t c;
+    char out[192];
+    CLOUD_GetConfig(&c);
+    snprintf(out, sizeof(out),
+             "{\"on\":%u,\"pid\":\"%s\",\"name\":\"%s\",\"key\":\"%s\",\"online\":%u}",
+             c.on, c.pid, c.name,
+             (c.key[0]) ? WEB_SECRET_MASK : "", CLOUD_IsOnline() ? 1u : 0u);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+
+/* POST /api/cloud: {on,pid,name,key} 保存并即时应用; key=掩码"********"表示保持不变, 空串=清除 */
+static esp_err_t web_api_cloud_post(httpd_req_t *req)
+{
+    NET_Touch();   /* 会话续期(路径1): 防空闲自动断误判 */
+    if (!web_token_ok(req))
+    {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad token");
+        return ESP_OK;
+    }
+    char *buf = web_recv_body(req, 512);
+    cJSON *root;
+    if (!buf)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv fail");
+        return ESP_OK;
+    }
+    root = cJSON_Parse(buf);
+    free(buf);
+    uint8_t ok = 0;
+    if (root)
+    {
+        cJSON *jon = cJSON_GetObjectItem(root, "on");
+        cJSON *jpid = cJSON_GetObjectItem(root, "pid");
+        cJSON *jname = cJSON_GetObjectItem(root, "name");
+        cJSON *jkey = cJSON_GetObjectItem(root, "key");
+        uint8_t on = (jon && cJSON_IsNumber(jon) && jon->valueint) ? 1 : 0;
+        const char *pid = (jpid && cJSON_IsString(jpid)) ? jpid->valuestring : "";
+        const char *name = (jname && cJSON_IsString(jname)) ? jname->valuestring : "";
+        const char *key = (jkey && cJSON_IsString(jkey)) ? jkey->valuestring : "";
+        if (cloud_str_ok(pid, CLOUD_PID_MAX, 0) &&
+            cloud_str_ok(name, CLOUD_NAME_MAX, 0) &&
+            (key[0] == '\0' || cloud_str_ok(key, CLOUD_KEY_MAX, 1)))
+        {
+            cloud_cfg_t c;
+            CLOUD_GetConfig(&c);
+            if (strcmp(key, WEB_SECRET_MASK) != 0)
+            {
+                memset(c.key, 0, sizeof(c.key));
+                strncpy(c.key, key, sizeof(c.key) - 1);
+            }
+            memset(c.pid, 0, sizeof(c.pid));
+            strncpy(c.pid, pid, sizeof(c.pid) - 1);
+            memset(c.name, 0, sizeof(c.name));
+            strncpy(c.name, name, sizeof(c.name) - 1);
+            c.on = on;
+            ok = (!on || (c.pid[0] && c.name[0] && c.key[0]));   /* 开启必须三元组齐全 */
+            if (ok) CLOUD_SetConfig(&c);
+        }
+        cJSON_Delete(root);
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, ok ? "{\"ok\":1}" : "{\"ok\":0,\"err\":\"bad cloud cfg\"}");
+    return ESP_OK;
+}
+
 /* ================= 入口 ================= */
 void WEB_Init(void)
 {
@@ -1408,7 +1498,7 @@ void WEB_Init(void)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 16384;          /* 大栈: 解析 + 大JSON响应 */
-    cfg.max_uri_handlers = 24;       /* 主15 + captive portal 探测 7 + 余量 */
+    cfg.max_uri_handlers = 26;       /* 主17 + captive portal 探测 7 + 余量 */
     cfg.max_open_sockets = 6;        /* 页面尾部 4 个并发 fetch + captive portal 探测 + 余量(lru 清最旧) */
     cfg.lru_purge_enable = true;
     httpd_handle_t server = NULL;
@@ -1435,6 +1525,8 @@ void WEB_Init(void)
     httpd_uri_t r13 = { .uri = "/api/clearwifi", .method = HTTP_POST, .handler = web_api_clearwifi, .user_ctx = NULL };
     httpd_uri_t r14 = { .uri = "/api/token",    .method = HTTP_GET,  .handler = web_api_token,      .user_ctx = NULL };
     httpd_uri_t r15 = { .uri = "/api/scanres",  .method = HTTP_GET,  .handler = web_api_scanres,    .user_ctx = NULL };
+    httpd_uri_t r16 = { .uri = "/api/cloud",    .method = HTTP_GET,  .handler = web_api_cloud_get,  .user_ctx = NULL };
+    httpd_uri_t r17 = { .uri = "/api/cloud",    .method = HTTP_POST, .handler = web_api_cloud_post, .user_ctx = NULL };
     httpd_register_uri_handler(server, &r1);
     httpd_register_uri_handler(server, &r2);
     httpd_register_uri_handler(server, &r3);
@@ -1450,6 +1542,8 @@ void WEB_Init(void)
     httpd_register_uri_handler(server, &r13);
     httpd_register_uri_handler(server, &r14);
     httpd_register_uri_handler(server, &r15);
+    httpd_register_uri_handler(server, &r16);
+    httpd_register_uri_handler(server, &r17);
 
     /* captive portal 探测路径(安卓/iOS/Windows): 全返回配置页, 手机连热点自动弹出 */
     {

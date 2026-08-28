@@ -30,6 +30,7 @@
 #include "BUZZER.h"
 #include "POWER.h"
 #include "WEB.h"
+#include "CLOUD.h"
 #include "ota_drv.h"
 #include "MPU6050.h"
 #include "DS1302.h"
@@ -744,6 +745,21 @@ static void ui_task(void *arg)
             }
         }
 
+        /* 云端下发的指令(OneNET display_cmd) -> 与网页指令同一乱码破译路径 */
+        {
+            static char ccmd[CLOUD_CMD_MAX];
+            if (CLOUD_TakeCmd(ccmd, sizeof(ccmd)))
+            {
+                if (ui_state != ST_INS && ui_state != ST_INFO)
+                {
+                    if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
+                    ui_push(ST_INS);
+                }
+                INS_ShowIns(ccmd);
+                PWR_Wake(now);
+            }
+        }
+
         /* 随机神谕推送 + 闹钟触发 + 每日签: 每秒检查, 到时主界面空闲则推送并唤醒屏幕 */
         if (now - oracle_last >= 1000)
         {
@@ -758,6 +774,7 @@ static void ui_task(void *arg)
                     strncpy(daily_last, dd, sizeof(daily_last) - 1);
                     daily_last[sizeof(daily_last) - 1] = '\0';
                     ORACLE_DsignInc();   /* 每日签计数(已收拢至 ORACLE 组件) */
+                    CLOUD_NotifyEvent(CLOUD_EVT_DAILY, NULL);   /* 云端事件: 每日神谕已推送 */
                     INS_ShowRandom();
                     ui_push(ST_INS);
                     PWR_Wake(now);
@@ -801,6 +818,7 @@ static void ui_task(void *arg)
             }
             if (ALM_Check())       /* 有闹钟到点(已在 ALM 内标记当日触发): 任意界面都打断显示 */
             {
+                CLOUD_NotifyEvent(CLOUD_EVT_ALARM, NULL);   /* 云端事件: 闹钟到点(累计计数在 CLOUD 内) */
                 ui_to_main();      /* 与待机闹钟唤醒一致: 先回主界面再显示闹钟指令 */
                 ALM_Show();        /* 闹钟专属指令乱码破译 */
                 ui_push(ST_INS);
@@ -808,6 +826,7 @@ static void ui_task(void *arg)
             }
             if (TODO_RemindDue())  /* 有待办提醒到点: 亮屏+蜂鸣+乱码显示待办 */
             {
+                CLOUD_NotifyEvent(CLOUD_EVT_TODO, TODO_RemindText());   /* 云端事件: 待办提醒(msg=待办文本) */
                 ui_to_main();
                 INS_Show(TODO_RemindText());
                 ui_push(ST_INS);
@@ -1002,10 +1021,10 @@ static void ui_task(void *arg)
         }
         BUZZER_Tick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
 
-        /* 待机: 息屏后进浅睡眠(倒计时/番茄钟/OTA 下载进行中不睡: 前者需精确走秒,
-         * 后者待机会关 WiFi 掐断下载; 按键唤醒后有 400ms 冷却) */
+        /* 待机: 息屏后进浅睡眠(倒计时/番茄钟/OTA 下载/云端会话进行中不睡: 前两者需精确走秒,
+         * OTA 待机会关 WiFi 掐断下载, 云端在线会断 MQTT 致频繁掉线; 按键唤醒后有 400ms 冷却) */
         if (!PWR_ScreenOn() && ui_state != ST_TIMER && ui_state != ST_POMO &&
-            !ota_drv_busy() && PWR_StandbyAllowed(now))
+            !ota_drv_busy() && !CLOUD_KeepAlive() && PWR_StandbyAllowed(now))
         {
             PWR_StandbyEnter();   /* 息屏后浅睡眠; 扣屏等待窗/唤醒冷却由 POWER 判定 */
         }
@@ -1087,6 +1106,7 @@ void app_main(void)
     BAT_Init();   /* 电量 ADC 初始化(GPIO1 分压) */
     MPU_Init();   /* MPU6050 六轴初始化(软件I2C, 无传感器则后台重试) */
     GACHA_Init(); /* 创建抽卡/图鉴跨任务互斥量(须在 WEB_Init 启动 httpd 之前, 避免绘图请求撞上 mux=NULL) */
+    CLOUD_Init();   /* 云端(OneNET MQTT): 加载三元组并建会话任务(未启用不连, 网页「云端」卡片配置); 须在 WEB_Init 前, 防 httpd 请求早于配置互斥量 */
     WEB_Init();   /* 启动配置页(联网后访问 http://<ip>/) */
     ota_drv_init();   /* 加载 OTA 配置(NVS "ota": url/sha256) */
     ota_drv_mark_valid();   /* 当前固件能跑到这里: 标记有效, 防止异常回滚 */
