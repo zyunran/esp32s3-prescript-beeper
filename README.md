@@ -10,6 +10,15 @@
 - 可复用驱动库：`D:/STM32Project/Library_SK/my_esp32_lib/esp32oder`（独立解耦，含使用说明）
 ---
 
+## v1.14 更新
+
+- 新增：OneNET Studio MQTT 云端接入（新组件 `components/CLOUD`）：电量/信号/版本/闹钟计数**属性上报**（连上即报 + 60s 周期），闹钟到点/待办提醒/每日神谕**事件上报**
+- 新增：平台服务 `display_cmd` **下行指令** → 屏幕乱码破译显示（与网页下发同一路径，`made in heaven` 彩蛋同待遇），并回执 invoke_reply
+- 新增：网页「☁ 云端 OneNET」配置卡片（`/api/cloud` GET/POST；三元组字符集白名单防 topic 注入，DeviceKey 脱敏不回显）
+- 设计：「远程在线」**默认关**，本地功能零影响；开启后云端会话阻止浅睡眠断网（待机耗电相应增加）；设备离线时的下行指令直接丢弃，不做补发
+- 鉴权：HMAC-SHA256 设备级 token 连接时现算（`cloud_token.c`，与 `tools/onenet_token.py` 同规则可交叉验证）
+- 质量：双子代理交叉审查全部新增代码，高 1 中 2 低 6 项全部修复（解析失败路径未初始化 id 回执 UB、start 失败卡死 KeepAlive、待机闹钟漏报、双核计数原子化、下行 topic 精确匹配等）
+
 ## v1.13 更新
 
 - 优化：网页一次保存的 NVS commit 由 25~37 次合并为 ≤8 次(设置/闹钟/答案批量落盘), POST 提速且降低 flash 磨损
@@ -74,7 +83,7 @@
 - **时间管理**：闹钟（每天/工作日/周末/一次性/自定义星期）、倒计时到点蜂鸣+自动亮屏、番茄钟（工作/休息自动轮换）、每日神谕定时推送。
 - **离线可用**：DS1302 上电即显时间，断电由模块电池续走；无网络也能用全部本地功能。
 - **浅睡眠低功耗**：50ms 定时片睡 + 挂起采样任务 + 停 WiFi，唤醒后台重连并 SNTP 立即校时。
-- **网页全量配置**：WiFi/天气/指令库/外观/闹钟/待办/使用者/破译参数/图鉴，全部 NVS 持久化，重启不丢。
+- **网页全量配置**：WiFi/天气/指令库/外观/闹钟/待办/使用者/破译参数/图鉴/云端(OneNET)，全部 NVS 持久化，重启不丢。
 
 ## 架构与工程化
 
@@ -88,6 +97,8 @@ flowchart LR
     U --> T[TIMER / ALARM / POMODORO]
     U --> N[NET 按需联网+天气]
     U --> P[POWER 息屏/浅睡眠]
+    C[CLOUD OneNET MQTT] -->|display_cmd| U
+    U -.->|属性/事件上报| C
 ```
 
 - **组件化分层**：14 个功能组件 + `COMMON` 公共头；UI 帧缓冲绘制接口复用给破译/抽卡/计时等全屏界面。
@@ -96,6 +107,29 @@ flowchart LR
 - **两轮系统性审计**：累计修复 60+ 项问题（网页配置"半保存"事务化、NVS 写合并 37 次→≤8 次 commit、双核数据竞态、全局状态污染、注释漂移）。
 - **安全**：网页 POST 全量 CSRF token 校验；WiFi/天气凭据仅存 NVS 不入源码；配网热点密码每台设备随机生成。
 - **发布规范**：`version.txt` 统一管理版本号；OTA 双分区 + SHA256 + 启动回滚防护；GitHub Release 附固件与更新说明。
+
+## 云端 OneNET（可选，v1.14）
+
+「远程在线」默认关闭，不影响任何本地功能。开启后设备经 MQTT 接入中国移动 OneNET Studio 物联网平台，接入参数 `mqtt://mqtts.heclouds.com:1883`（clientId=设备名，username=产品ID，password=安全鉴权 token）：
+
+| 链路 | 内容 | 频率 |
+|------|------|------|
+| 属性上报 | `battery` / `rssi` / `version` / `alarm_cnt` | 连上即报 + 每 60s |
+| 事件上报 | `alarm_fire` 闹钟到点 / `todo_remind` 待办提醒 / `daily_sign` 每日神谕（参数 `msg`） | 触发即报 |
+| 下行指令 | 服务 `display_cmd`（入参 `msg`）→ 屏幕乱码破译显示 + 回执 | 平台随时 |
+
+### 平台侧配置（OneNET 控制台）
+
+1. 注册 [open.iot.10086.cn](https://open.iot.10086.cn) 并完成实名认证 → 物联网平台（OneNET Studio）→ 创建产品：接入协议 **MQTT**、数据协议 **OneJSON**、联网方式 **WiFi**。
+2. 功能定义按上表创建（**标识符必须与上表完全一致**）：属性 4 个（`battery` int32 / `rssi` int32 / `version` text / `alarm_cnt` int32）、事件 3 个（`alarm_fire` / `todo_remind` / `daily_sign`，info 级，参数 `msg` text）、服务 1 个（`display_cmd`，入参 `msg` text、`timeout` int32）。
+3. 创建设备，记录三元组 **ProductID / DeviceName / DeviceKey**。
+4. 建议先手动验证：PC 运行 `python tools/onenet_token.py <ProductID> <DeviceName> <DeviceKey>` 生成 token，MQTTX 连 `mqtt://mqtts.heclouds.com:1883`（clientId=DeviceName，username=ProductID，password=token），平台设备详情显示「在线」即三元组正确。
+
+### 设备侧配置
+
+联网后打开设备配置页 → 「☁ 云端 OneNET」卡片：填入三元组、勾选启用、保存。DeviceKey 只存设备 NVS，网页不回显明文（掩码=保持不变）。
+
+> 注意：启用期间设备保持在线、不进浅睡眠待机（耗电相应增加）；DeviceKey 泄露可在平台重置设备密钥。
 
 ## 硬件
 
