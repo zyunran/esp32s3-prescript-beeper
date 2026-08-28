@@ -164,6 +164,6 @@ const char web_page[] =
 "pid:document.getElementById('cloud_pid').value.trim(),name:document.getElementById('cloud_name').value.trim(),"
 "key:document.getElementById('cloud_key').value};"
 "let j=await (await post('/api/cloud',b)).json();"
-"document.getElementById('msg').textContent=j.ok?'✓ 云端配置已保存':'保存失败(三元组只能含字母数字-_)';cloudLoad();}"
+"document.getElementById('msg').textContent=j.ok?'✓ 云端配置已保存':'保存失败(检查三元组格式: 仅字母数字-_/开启需填齐)';cloudLoad();}"
 "cloudLoad();"
 "load();</script></body></html>";

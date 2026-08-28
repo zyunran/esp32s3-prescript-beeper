@@ -698,6 +698,7 @@ static void stby_sensor_suspend(void)   { MPU_Suspend(); }
 static void stby_sensor_resume(void)    { MPU_Resume(); }
 static void stby_alarm_wake(void)
 {
+    CLOUD_NotifyEvent(CLOUD_EVT_ALARM, NULL);   /* 待机中触发的闹钟补云端事件(未启用自动丢弃): 此路径的 ALM_Check 已被待机 tick 消费, ui_task 分支不会再走 */
     ui_to_main();      /* 与亮屏路径一致: 先回主界面再显示闹钟指令 */
     ALM_Show();        /* 闹钟专属指令乱码破译 */
     ui_push(ST_INS);
@@ -745,17 +746,28 @@ static void ui_task(void *arg)
             }
         }
 
-        /* 云端下发的指令(OneNET display_cmd) -> 与网页指令同一乱码破译路径 */
+        /* 云端下发的指令(OneNET display_cmd) -> 与网页指令同一乱码破译路径(含彩蛋同待遇) */
         {
             static char ccmd[CLOUD_CMD_MAX];
             if (CLOUD_TakeCmd(ccmd, sizeof(ccmd)))
             {
-                if (ui_state != ST_INS && ui_state != ST_INFO)
+                if (strcasecmp(ccmd, "made in heaven") == 0)
                 {
-                    if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
+                    LOOM_TimeToggle();
+                    ui_to_main();                /* 彩蛋确认播完自动回主界面看时间加速 */
+                    INS_Show(LOOM_TimeOn() ? "MADE IN\nHEAVEN" : "时间恢复");
+                    egg_confirm = 1;
                     ui_push(ST_INS);
                 }
-                INS_ShowIns(ccmd);
+                else
+                {
+                    if (ui_state != ST_INS && ui_state != ST_INFO)
+                    {
+                        if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
+                        ui_push(ST_INS);
+                    }
+                    INS_ShowIns(ccmd);
+                }
                 PWR_Wake(now);
             }
         }

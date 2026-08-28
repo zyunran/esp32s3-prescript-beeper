@@ -7,7 +7,7 @@
 /* CLOUD 组件内部接口(cloud.c 任务主体 / cloud_onenet.c 平台适配 / cloud_token.c 鉴权) */
 
 #define CLOUD_TOKEN_MAX    512     /* 鉴权 password 上限(res/sign URL 编码后) */
-#define CLOUD_TOPIC_MAX    128     /* $sys/{pid}/{name}/thing/... 上限 */
+#define CLOUD_TOPIC_MAX    160     /* $sys/{pid}/{name}/thing/... 上限(满长三元组下最长回执 topic 约 133B) */
 #define CLOUD_PAYLOAD_MAX  512     /* 属性/事件/回执组包上限 */
 #define CLOUD_MSG_MAX      64      /* 事件 msg 文本上限 */
 #define CLOUD_ID_MAX       16      /* 平台回执 id 串上限(仅 [A-Za-z0-9_-]) */

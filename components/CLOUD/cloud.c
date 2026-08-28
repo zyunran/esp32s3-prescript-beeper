@@ -50,7 +50,7 @@ static volatile uint8_t s_reload = 0;
 static uint32_t s_last_report = 0;
 static uint8_t  s_report_due = 0;   /* MQTT_EVENT_CONNECTED 置 1: 连上立即先报一次 */
 static uint32_t s_seq = 0;
-static volatile uint32_t s_alarm_cnt = 0;   /* 闹钟触发累计(NotifyEvent 跨任务自增) */
+static uint32_t s_alarm_cnt = 0;   /* 闹钟触发累计(跨任务访问, 一律走 __atomic 原子读写, 双核下裸 RMW 会撕裂) */
 static uint32_t s_start_block = 0;          /* 启动失败冷却(到点前不再尝试, 防坏 key 刷日志) */
 
 /* ================= 下行指令缓冲(httpd... mqtt 任务写 / ui_task 读): 自旋锁, 同 WEB 模式 ================= */
@@ -93,7 +93,7 @@ uint8_t CLOUD_TakeCmd(char *buf, size_t n)
 void CLOUD_NotifyEvent(cloud_evt_t e, const char *msg)
 {
     cloud_evt_item_t it;
-    if (e == CLOUD_EVT_ALARM) s_alarm_cnt++;   /* 计数与开关无关: 关闭期间也累计 */
+    if (e == CLOUD_EVT_ALARM) __atomic_fetch_add(&s_alarm_cnt, 1, __ATOMIC_RELAXED);   /* 计数与开关无关: 关闭期间也累计 */
     if (!s_started || !s_evtq) return;         /* 未启用: 丢弃(不做离线补发) */
     it.evt = (uint8_t)e;
     it.msg[0] = '\0';
@@ -177,10 +177,11 @@ static void report_props(const cloud_cfg_t *c)
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
     if (bat == 255) bat = -1;   /* 无电池: 上报里跳过该项 */
+    uint32_t alarms = __atomic_load_n(&s_alarm_cnt, __ATOMIC_RELAXED);
     s_seq++;
     if (cloud_topic(topic, sizeof(topic), c->pid, c->name, "property/post") != 0) return;
     if (cloud_prop_post_json(payload, sizeof(payload), bat, rssi,
-                             esp_app_get_description()->version, s_alarm_cnt, s_seq) != 0) return;
+                             esp_app_get_description()->version, alarms, s_seq) != 0) return;
     esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 0);
 }
 
@@ -215,20 +216,17 @@ static void on_mqtt_connected(esp_mqtt_event_handle_t event)
 /* 下行 display_cmd 服务调用: 解析 -> 暂存待 ui_task 显示 + 回执(成功 200/拒收 400) */
 static void on_mqtt_data(esp_mqtt_event_handle_t event)
 {
-    static const char invoke_suffix[] = "/thing/service/display_cmd/invoke";
-    const char *topic = event->topic;
-    int tlen = event->topic_len;
-
-    /* 片段化报文直接丢弃(缓冲 1024B, 本组件报文最大数百字节, 实际不应出现) */
-    if (event->data_len != event->total_data_len) return;
-    if (tlen < (int)sizeof(invoke_suffix) - 1 ||
-        memcmp(topic + tlen - (sizeof(invoke_suffix) - 1),
-               invoke_suffix, sizeof(invoke_suffix) - 1) != 0)
-        return;
-
-    char jbuf[512], msg[CLOUD_CMD_MAX], id[CLOUD_ID_MAX], reply[64];
+    cloud_cfg_t c;
+    char full[CLOUD_TOPIC_MAX], jbuf[512], msg[CLOUD_CMD_MAX], id[CLOUD_ID_MAX] = "", reply[64];
     int code = 400;
-    if (event->data_len < (int)sizeof(jbuf))
+
+    CLOUD_GetConfig(&c);
+    /* 精确匹配本设备 topic(防其他主题尾缀误配); 片段化报文直接丢弃(实际不应出现) */
+    if (event->data_len == event->total_data_len &&
+        cloud_topic(full, sizeof(full), c.pid, c.name, "service/display_cmd/invoke") == 0 &&
+        event->topic_len == (int)strlen(full) &&
+        memcmp(event->topic, full, (size_t)event->topic_len) == 0 &&
+        event->data_len < (int)sizeof(jbuf))
     {
         memcpy(jbuf, event->data, event->data_len);
         jbuf[event->data_len] = '\0';
@@ -241,10 +239,9 @@ static void on_mqtt_data(esp_mqtt_event_handle_t event)
             code = 200;
         }
     }
+    if (id[0])   /* 回执仅在 id 白名单通过时发送: 不用未初始化/无法关联的 id 拼 JSON */
     {
         char rtopic[CLOUD_TOPIC_MAX];
-        cloud_cfg_t c;
-        CLOUD_GetConfig(&c);
         if (cloud_topic(rtopic, sizeof(rtopic), c.pid, c.name,
                         "service/display_cmd/invoke_reply") == 0 &&
             cloud_cmd_reply_json(reply, sizeof(reply), id, code) == 0)
@@ -300,7 +297,14 @@ static void cloud_start(const cloud_cfg_t *c)
         return;
     }
     esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event_cb, NULL);
-    esp_mqtt_client_start(s_client);
+    if (esp_mqtt_client_start(s_client) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "mqtt start fail(多为堆不足): 15s 后重试");
+        esp_mqtt_client_destroy(s_client);   /* 不置 s_started: 防死客户端卡住 KeepAlive/待机门控 */
+        s_client = NULL;
+        s_start_block = now + 15000;
+        return;
+    }
     s_started = 1;
     ESP_LOGI(TAG, "mqtt start: pid=%s name=%s", c->pid, c->name);
 }
