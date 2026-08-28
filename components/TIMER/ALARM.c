@@ -240,22 +240,31 @@ static void alm_setup_enter(void)
     alm_render_setup();
 }
 
-/* 保存当前设定值到闹钟槽(找空槽, 全满则覆盖第 0 个) */
+/* 保存当前设定值到闹钟槽: 首选"从未设置"槽(days==0, 与网页找槽语义一致),
+ * 次选已禁用槽(复用, 不挤占开启中的), 全满才覆盖第 0 个.
+ * 旧实现只看 en==0: 16 槽里有禁用闹钟时, 新增会静默覆盖它而放着真空槽不用 */
 static void alm_add_save(void)
 {
-    uint8_t i;
+    uint8_t i, slot = ALM_MAX;
     alm_lock();   /* 找槽+写入原子, 防与网页 SetSlot 并发选重槽/撕裂 */
     for (i = 0; i < ALM_MAX; i++)
     {
-        if (!alm[i].en) break;
+        if (alm[i].days == 0) { slot = i; break; }   /* 从未设置: 首选 */
     }
-    if (i >= ALM_MAX) i = 0;
-    alm[i].en = 1;
-    alm[i].hh = al_hh;
-    alm[i].mm = al_mm;
-    alm[i].days = alm_mode_days[al_mode];
-    alm[i].once = alm_mode_once[al_mode];
-    alm[i].lastday = 0;
+    if (slot >= ALM_MAX)
+    {
+        for (i = 0; i < ALM_MAX; i++)
+        {
+            if (!alm[i].en) { slot = i; break; }     /* 已禁用: 次选复用 */
+        }
+    }
+    if (slot >= ALM_MAX) slot = 0;                   /* 全满: 覆盖第 0 个 */
+    alm[slot].en = 1;
+    alm[slot].hh = al_hh;
+    alm[slot].mm = al_mm;
+    alm[slot].days = alm_mode_days[al_mode];
+    alm[slot].once = alm_mode_once[al_mode];
+    alm[slot].lastday = 0;
     alm_save();
     alm_unlock();
 }

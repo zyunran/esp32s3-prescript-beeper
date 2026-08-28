@@ -205,8 +205,15 @@ static void todo_item_fill(uint8_t i, char *out, size_t outsz)
     }
     while (*p && o < outsz - 4)
     {
-        uint8_t len = (*p & 0x80) ? 3 : 1;
-        uint8_t cw = (*p & 0x80) ? 16 : 8;
+        uint8_t len = 1, cw = 8;
+        unsigned char c = (unsigned char)*p;
+        if (c & 0x80)
+        {
+            /* 2/3 字节 UTF-8 须区分: 一律按 3 字节复制会把 2 字节字符(如 ·)的下一字首字节吞进本字 */
+            len = ((c & 0xE0) == 0xC0) ? 2 : 3;
+            cw = 16;
+            if (p[1] == '\0' || (len == 3 && p[2] == '\0')) break;   /* 残缺尾: 停, 不复制半个字 */
+        }
         if (w + cw > TODO_TEXT_MAX_W) break;
         memcpy(out + o, p, len);
         o += len;

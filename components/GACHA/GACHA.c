@@ -1054,6 +1054,8 @@ static void gacha_voice_next(void)
 
 static void gacha_start_voices(void)
 {
+    gc_single = 0;   /* 十连永远不是积分单抽: 清残留标志, 防上次积分抽被强退后 gc_single=1
+                      * 在本十连第一张金卡语音播完时误触 gacha_voice_next 的"单抽直接回菜单"(吞掉结果列表) */
     gc_v_gold_idx = 0;
     gc_phase = GC_VOICE;
     if (!gacha_voice_find(0))
@@ -1270,6 +1272,7 @@ void GACHA_ForceExit(void)
 {
     gc_busy = 0;
     gc_menu_cur = 0;   /* 完整退出: 下次进入从十连开始 */
+    gc_single = 0;     /* 积分单抽语音中强退: 清单抽标志, 防残留吞掉下次十连结果(gacha_start_voices 亦兜底) */
 }
 
 void GACHA_OnEvent(uint8_t evt)

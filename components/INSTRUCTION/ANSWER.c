@@ -8,6 +8,8 @@
 #include "INSTRUCTION.h"   /* INS_Show 破译显示答案 */
 #include "esp_random.h"
 #include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -118,6 +120,13 @@ static const char *ans_list[ANS_CAT_N][ANS_TOTAL_MAX];            /* 有效答�
 static uint8_t ans_list_n[ANS_CAT_N];                             /* 每类有效条数 */
 static uint8_t ans_loaded = 0;
 
+/* 跨任务互斥: 网页(httpd 任务)经 ANS_FromText/ANS_Custom 读写答案库,
+ * ui_task 经 ans_draw 同时读; 无锁时 httpd 逐行覆写 ans_nvs_buf/ans_list 会被
+ * ui_task 抽答案读到半截串(屏上破译出乱码文本). 与 ALM/TODO/INS/GACHA 同一防护标准. */
+static SemaphoreHandle_t ans_mux = NULL;
+static void ans_lock(void)   { if (ans_mux) xSemaphoreTakeRecursive(ans_mux, portMAX_DELAY); }
+static void ans_unlock(void) { if (ans_mux) xSemaphoreGiveRecursive(ans_mux); }
+
 static const char *ans_nvs_key(uint8_t cat)
 {
     static const char *keys[ANS_CAT_N] = { "c0", "c1", "c2", "c3" };
@@ -189,14 +198,23 @@ static void ans_list_save(uint8_t cat)
 }
 
 /* ================= 内部 ================= */
-static void ans_draw(void)   /* 抽一条当前分类答案并破译显示 */
+/* 抽一条当前分类答案并破译显示.
+ * 全程持锁: 先选串再调 INS_Show(内部拷贝进破译缓冲), 防选中串在解析中途被 httpd 覆写 */
+static void ans_draw(void)
 {
     uint8_t cat = ans_cat_cur;
-    uint16_t total = ans_list_n[cat];
+    uint16_t total;
     const char *s;
-    if (total == 0) return;
+    ans_lock();
+    total = ans_list_n[cat];
+    if (total == 0)
+    {
+        ans_unlock();
+        return;
+    }
     s = ans_list[cat][esp_random() % total];   /* 从有效库(内置或网页覆盖)随机 */
     INS_Show(s);            /* 乱码破译显示答案 */
+    ans_unlock();
     ans_state = ANS_DRAW;
 }
 
@@ -213,6 +231,7 @@ void ANS_Init(void)
 {
     uint8_t c;
     if (ans_loaded) return;
+    ans_mux = xSemaphoreCreateRecursiveMutex();   /* 先于 WEB_Init 启动 httpd(main.c 顺序保证) */
     for (c = 0; c < ANS_CAT_N; c++) ans_list_load(c);
     ans_loaded = 1;
 }
@@ -281,6 +300,7 @@ const char *ANS_Custom(uint8_t cat)   /* 该分类【全部】答案整串文本
     uint8_t i;
     size_t wp = 0;
     if (cat >= ANS_CAT_N) return "";
+    ans_lock();
     out[0] = '\0';
     for (i = 0; i < ans_list_n[cat]; i++)
     {
@@ -288,6 +308,7 @@ const char *ANS_Custom(uint8_t cat)   /* 该分类【全部】答案整串文本
         wp += (size_t)snprintf(&out[wp], sizeof(out) - wp, "%s%s",
                                (i ? "\n" : ""), ans_list[cat][i]);
     }
+    ans_unlock();
     return out;
 }
 
@@ -296,6 +317,7 @@ void ANS_FromText(uint8_t cat, const char *text)   /* 网页覆盖整类答案(�
     const char *p = text, *nl;
     uint8_t n = 0;
     if (cat >= ANS_CAT_N) return;
+    ans_lock();
     /* 按行拆分(校验: 每行 ≤ ANS_LINE_MAX-1, 总条数 ≤ ANS_TOTAL_MAX) */
     while (*p && n < ANS_TOTAL_MAX)
     {
@@ -323,4 +345,5 @@ void ANS_FromText(uint8_t cat, const char *text)   /* 网页覆盖整类答案(�
     {
         ans_list_load(cat);                 /* 立即回填内置答案: 防"抽答案"静默失效(0 条时选该类按 OK 无反应)直到重启 */
     }
+    ans_unlock();
 }

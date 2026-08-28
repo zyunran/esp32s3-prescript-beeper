@@ -17,6 +17,7 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -97,6 +98,12 @@ static uint8_t   ui_user_n = 0;
 static const char *const ui_user_defaults[] = { "李箱", "里恩", "浮士德" };   /* 首次无 NVS 时的内置 */
 #define UI_USER_DEFAULT_N (sizeof(ui_user_defaults) / sizeof(ui_user_defaults[0]))
 
+/* 使用者列表跨任务互斥: 网页(httpd 任务)经 UI_UserAdd/UI_UserList 增改/读取,
+ * ui_task 经 UI_UserMenuEnter 快照建子菜单; 与 ALM/TODO/INS/GACHA 同一防护标准 */
+static SemaphoreHandle_t ui_user_mux = NULL;
+static void ui_user_lock(void)   { if (ui_user_mux) xSemaphoreTake(ui_user_mux, portMAX_DELAY); }
+static void ui_user_unlock(void) { if (ui_user_mux) xSemaphoreGive(ui_user_mux); }
+
 static void ui_user_rebuild(void)
 {
     uint8_t i;
@@ -129,6 +136,8 @@ static void ui_user_save(void)
 void UI_UserInit(void)
 {
     nvs_handle_t h;
+    ui_user_mux = xSemaphoreCreateMutex();   /* 先于 WEB_Init 启动 httpd(main.c 顺序保证) */
+    ui_user_lock();
     ui_user_n = 0;
     if (nvs_open("ins2", NVS_READONLY, &h) == ESP_OK)
     {
@@ -163,6 +172,7 @@ void UI_UserInit(void)
         ui_user_save();
     }
     ui_user_rebuild();
+    ui_user_unlock();
 }
 
 /* 添加使用者(去重), 返回 1=成功/已存在, 0=参数错/满 */
@@ -170,23 +180,52 @@ uint8_t UI_UserAdd(const char *name)
 {
     uint8_t i;
     if (!name || name[0] == '\0') return 0;
+    ui_user_lock();
     for (i = 0; i < ui_user_n; i++)
     {
-        if (strcmp(ui_user_names[i], name) == 0) return 1;
+        if (strcmp(ui_user_names[i], name) == 0) { ui_user_unlock(); return 1; }
     }
-    if (ui_user_n >= UI_USER_MAX) return 0;
+    if (ui_user_n >= UI_USER_MAX) { ui_user_unlock(); return 0; }
     snprintf(ui_user_names[ui_user_n], sizeof(ui_user_names[0]), "%s", name);
     ui_user_n++;
     ui_user_rebuild();
     ui_user_save();
+    ui_user_unlock();
     return 1;
 }
 
-/* 使用者列表(不含末项"退出"; 供网页端下拉选择, 与设备端子菜单一致) */
+/* 使用者列表(不含末项"退出"; 供网页端下拉选择, 与设备端子菜单一致).
+ * 返回内部指针表: 现有条目地址稳定(仅追加), 调用方读时并发 Add 只会看到新条目追加, 不撕裂 */
 const char *const *UI_UserList(uint8_t *count)
 {
-    *count = ui_user_n;
+    uint8_t n;
+    ui_user_lock();
+    n = ui_user_n;
+    ui_user_unlock();
+    *count = n;
     return (const char *const *)ui_user_ptr;
+}
+
+/* 进入"使用者"子菜单: 锁内快照当前列表初始化子菜单, 并高亮当前使用者名
+ * (cur_user 由调用方传入 INS_UserName() 快照; NULL/空串不高亮).
+ * 旧实现(main.c)直接读 ui_menu_cfg 指针表, 与 httpd 的 UI_UserAdd 无锁并发 */
+void UI_UserMenuEnter(const char *cur_user)
+{
+    uint8_t i;
+    ui_user_lock();
+    UI_SubMenuInitItems(ui_user_ptr, (uint8_t)(ui_user_n + 1));
+    if (cur_user && cur_user[0])
+    {
+        for (i = 0; i < ui_user_n; i++)
+        {
+            if (strcmp(ui_user_ptr[i], cur_user) == 0)
+            {
+                UI_SubMenuSetCur(i);
+                break;
+            }
+        }
+    }
+    ui_user_unlock();
 }
 
 static char ui_user_title[UI_USER_NAME_MAX] = "使用者";   /* 主菜单「使用者」项动态标题 = 当前使用者名(UI_SetUserTitle 更新) */
@@ -1312,6 +1351,8 @@ void UI_SubMenuInitItemsC(const char *const items[], uint8_t nitems, uint8_t cen
     else
     {
         ui_sub_center = center ? 1 : 0;
+        ui_sub_center_dx = 0;   /* 非 center=2 布局不用偏移: 在此归零, 防 GACHA 图鉴/罪人选择等设过的 24~32px
+                                 * 残留污染后续 center=2 菜单(此前 ALARM/TODO 被迫各自显式归零自救) */
     }
 
     for (i = 0; i < nitems; i++)

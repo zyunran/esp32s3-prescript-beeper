@@ -97,20 +97,11 @@ static uint32_t egg_hold_t = 0;       /* 确认定格计时 */
 static uint32_t egg_wx_last = 0;      /* 加速态天气随机刷新节流 ms */
 static uint32_t egg_draw_last = 0;    /* 加速态时钟整屏重绘节流 ms */
 
-/* 进入"使用者"子菜单并高亮当前使用者名称(实时反映, 如当前为但丁) */
+/* 进入"使用者"子菜单并高亮当前使用者名称(实时反映, 如当前为但丁).
+ * 列表快照/高亮在 UI 组件锁内完成(UI_UserMenuEnter): 防 httpd 的 UI_UserAdd 与本处迭代并发 */
 static void user_submenu_enter(void)
 {
-    const ui_menu_cfg_t *cfg = &ui_menu_cfg[sub_kind];
-    uint8_t u;
-    UI_SubMenuInitItems(cfg->items, cfg->item_count);
-    for (u = 0; u + 1 < cfg->item_count; u++)
-    {
-        if (strcmp(cfg->items[u], INS_UserName()) == 0)
-        {
-            UI_SubMenuSetCur(u);
-            break;
-        }
-    }
+    UI_UserMenuEnter(INS_UserName());
     ui_state = ST_SUB;
 }
 
@@ -1005,17 +996,20 @@ static void ui_task(void *arg)
                 MPU_BalanceTick();                 /* 平衡: 实时刷新 横滚/俯仰/航向 */
             }
 
-            /* 息屏检查: 无按键超过设置时长则关背光 */
-            if (SET_TimeoutSec() > 0 && (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
+            /* 息屏检查: 无按键超过设置时长则关背光.
+             * OTA 升级进行中不判息屏: 息屏->待机会经 stby_net_stop 关 WiFi, 下载被掐断(表现为"下载中断") */
+            if (SET_TimeoutSec() > 0 && !ota_drv_busy() &&
+                (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
             {
                 PWR_LcdOff();
             }
         }
         BUZZER_Tick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */
 
-        /* 待机: 息屏后进浅睡眠(倒计时进行中不睡, 需精确走秒; 按键唤醒后有 400ms 冷却) */
+        /* 待机: 息屏后进浅睡眠(倒计时/番茄钟/OTA 下载进行中不睡: 前者需精确走秒,
+         * 后者待机会关 WiFi 掐断下载; 按键唤醒后有 400ms 冷却) */
         if (!PWR_ScreenOn() && ui_state != ST_TIMER && ui_state != ST_POMO &&
-            PWR_StandbyAllowed(now))
+            !ota_drv_busy() && PWR_StandbyAllowed(now))
         {
             PWR_StandbyEnter();   /* 息屏后浅睡眠; 扣屏等待窗/唤醒冷却由 POWER 判定 */
         }

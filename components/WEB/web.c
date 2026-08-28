@@ -430,14 +430,16 @@ static int web_apply_alarms(cJSON *root)
 {
     cJSON *alarms = cJSON_GetObjectItem(root, "alarms");
     int n, max_i;
-    uint8_t max, i, used[16];
+    uint8_t max, i, used[16], keep[16];
     if (!alarms) return 1;
     if (!cJSON_IsArray(alarms)) return 0;
     n = cJSON_GetArraySize(alarms);
     max = ALM_Max();
     max_i = max;
+    if (max > sizeof(used)) return 0;   /* used/keep[] 容量上限: ALM_MAX 扩容时须同步调大本数组 */
     if (n < 0 || n > max_i) return 0;
     memset(used, 0, sizeof(used));
+    memset(keep, 0, sizeof(keep));
 
     for (i = 0; i < (uint8_t)n; i++)
     {
@@ -457,6 +459,22 @@ static int web_apply_alarms(cJSON *root)
         if (days && (!cJSON_IsNumber(days) || days->valueint < 0 || days->valueint > 127)) return 0;
         if (once && (!cJSON_IsNumber(once) || (once->valueint != 0 && once->valueint != 1))) return 0;
         if (idx && (!cJSON_IsNumber(idx) || idx->valueint < 0 || idx->valueint >= max_i)) return 0;
+        if (idx)   /* 显式槽位重复: 在改动任何槽之前拒绝整次保存(消除"半保存") */
+        {
+            if (keep[(uint8_t)idx->valueint]) return 0;
+            keep[(uint8_t)idx->valueint] = 1;
+        }
+    }
+
+    /* 清除遍历(先于设置): 网页整表语义 = 未出现在本次 payload 的既有槽一律删除.
+     * 必须先清后设 —— 旧顺序先给无 idx 新闹钟找空槽、后清除, 16 槽全满时"网页删1个加1个
+     * 再保存"会因找不到空槽而失败(且半保存); 先清后设后被删槽位即可复用 */
+    for (i = 0; i < max; i++)
+    {
+        uint8_t en2, hh2, mm2, days2, once2;
+        if (keep[i]) continue;
+        ALM_GetSlot(i, &en2, &hh2, &mm2, &days2, &once2);
+        if (days2 != 0) ALM_ClearSlot(i);
     }
 
     for (i = 0; i < (uint8_t)n; i++)
@@ -490,14 +508,6 @@ static int web_apply_alarms(cJSON *root)
                     (uint8_t)hh->valueint, (uint8_t)mm->valueint,
                     days ? (uint8_t)days->valueint : 0x7F,
                     once ? (uint8_t)(once->valueint ? 1 : 0) : 0);
-    }
-
-    for (i = 0; i < max; i++)
-    {
-        uint8_t en2, hh2, mm2, days2, once2;
-        if (used[i]) continue;
-        ALM_GetSlot(i, &en2, &hh2, &mm2, &days2, &once2);
-        if (days2 != 0) ALM_ClearSlot(i);
     }
     return 1;
 }

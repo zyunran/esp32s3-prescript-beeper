@@ -14,13 +14,13 @@
 
 void MPU_Init(void);                /* GPIO + 软件I2C + MPU6050 寄存器初始化(不含任务) */
 void MPU_Start(void *key_q);        /* 启动采样任务(key_q=按键队列, 摇动事件送入) */
-void MPU_SetShake(uint8_t on);
-uint8_t MPU_EvtWasShake(void);      /* 1=最近200ms内有摇动产生的 确认/退出 事件(平衡页过滤用) */      /* 摇动检测开关(1=开, 0=关; 默认开; 只禁摇动, 采样/平衡照常) */
+void MPU_SetShake(uint8_t on);      /* 摇动检测开关(1=开, 0=关; 默认开; 只禁摇动, 采样/平衡照常) */
+uint8_t MPU_EvtWasShake(void);      /* 1=最近200ms内有摇动产生的 确认/退出 事件(平衡页过滤用) */
 void MPU_Suspend(void);             /* 待机暂停采样(标志位自查, 不打断 I2C 事务防总线锁死); 唤醒后 MPU_Resume 恢复 */
 void MPU_Resume(void);              /* 恢复采样并强制立即重新探测 */
 float MPU_Roll(void);               /* 横滚角 ° */
 float MPU_Pitch(void);              /* 俯仰角 ° */
-float MPU_Yaw(void);                /* 航向角 °(陀螺仪积分, 会缓慢漂移) */
+float MPU_Yaw(void);                /* 航向角 °(泄漏积分, 时间常数≈10s: 转动时可读, 静止缓慢回零, 漂移有界) */
 void MPU_BalanceTick(void);         /* 绘制「平衡」实时页(由 UI 主任务驱动) */
 
 #endif

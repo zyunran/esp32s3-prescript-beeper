@@ -125,6 +125,7 @@ void UI_DrawCursor(const char *s, int16_t x, int16_t y); /* 按当前光标样�
 void UI_Init(void);                          /* 初始化 LCD + 画初始界面(左图标+右菜单) */
 void UI_UserInit(void);                      /* 加载使用者列表(NVS, 无则内置默认; UI_Init 前调用) */
 uint8_t UI_UserAdd(const char *name);        /* 添加使用者(去重, NVS 持久化), 1=成功/已存在 */
+void UI_UserMenuEnter(const char *cur_user); /* 进入"使用者"子菜单: 锁内快照列表渲染并高亮 cur_user(传 INS_UserName() 快照; NULL/空不高亮) */
 void UI_Scroll(int8_t dir);                  /* 菜单滑动: dir=+1 内容上移, dir=-1 内容下移 */
 uint8_t UI_GetSelect(void);                  /* 返回当前选中项索引 */
 

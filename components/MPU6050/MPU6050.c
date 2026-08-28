@@ -277,6 +277,7 @@ void MPU_Init(void)
  *  - 加速度角: atan2, 与参考公式一致(pitch 用 -ax)
  *  - 互补: a=0.9 陀螺 + 0.1 加速度; yaw 仅陀螺积分, 会漂移 */
 #define FILTER_A    0.9f
+#define YAW_LEAK_A  0.997f                     /* yaw 泄漏系数(30ms/帧 → 时间常数≈10s): 漂移有界且转动时可读 */
 #define GYRO_SCALE  (2000.0f / 32768.0f)   /* ±2000dps -> °/s per LSB */
 #define ACCEL_G     (16384.0f)             /* ±2g -> LSB/g */
 #define PI_F        3.1415926536f
@@ -300,6 +301,9 @@ float MPU_Yaw(void)    { return f_yaw; }
  *       ② 角速度超分轴阈值 SHAKE_GYRO_UD/LR 且竖直分量够(转腕/甩动型) */
 #define SHAKE_G        0.8f                  /* 平移竖直加速度触发阈值 g(重力投影法与安装无关, 不随 PCB 改) */
 #define SHAKE_THRESH   ((int32_t)(SHAKE_G * ACCEL_G))
+#define SHAKE_OK_G     1.3f                  /* 平移水平分量的 确认/返回 触发阈值 g: 须显著高于竖直阈值 ——
+                                              * 放下/拿起设备的冲击即达 0.8g 级, 若与翻页同阈会把冲击误判成 OK/长按OK(菜单误确认/误退出) */
+#define SHAKE_OK_THRESH ((int32_t)(SHAKE_OK_G * ACCEL_G))
 #define SHAKE_COOLDOWN 300u                  /* 两次摇动最小间隔 ms */
 #define SHAKE_GYRO_LR  70.0f                 /* 左右摇(横滚/航向)阈值 °/s: 实测易误触, 调高收紧 */
 #define SHAKE_GYRO_UD  45.0f                 /* 上下摇(俯仰)阈值 °/s: 实测有时失效, 调低提灵敏度 */
@@ -445,10 +449,13 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
                 }
                 last_ax = ax; last_sn = sn; last_at = now; last_gv = gsel;
             }
-            else if (fabsf(vert) > SHAKE_THRESH || hmag > SHAKE_THRESH)
+            else if (fabsf(vert) > SHAKE_THRESH || hmag > SHAKE_OK_THRESH)
             {
-                if (fabsf(vert) >= hmag)    evt = (vert > 0) ? EVT_UP : EVT_DOWN;
-                else                        evt = (lat > 0)  ? EVT_OK : EVT_LONG_OK;
+                /* 平移兜底: 竖直→上下翻页(普通阈); 水平→确认/返回须过专用高阈值 ——
+                 * 竖直分量过了普通阈但水平只在中段(放下/拿起的冲击)时不映射确认, 直接丢弃 */
+                if (fabsf(vert) >= hmag)         evt = (vert > 0) ? EVT_UP : EVT_DOWN;
+                else if (hmag > SHAKE_OK_THRESH) evt = (lat > 0)  ? EVT_OK : EVT_LONG_OK;
+                else                             return;
             }
             else
             {
@@ -522,7 +529,7 @@ static uint8_t mpu_sample(void)
 
         f_roll  = FILTER_A * f_roll  + (1.0f - FILTER_A) * roll_a;
         f_pitch = FILTER_A * f_pitch + (1.0f - FILTER_A) * pitch_a;
-        f_yaw   = FILTER_A * f_yaw;          /* yaw: 泄漏积分(每帧×0.9, 时间常数约 0.3s): 静止自动回零, 非真实累计航向 */
+        f_yaw   = YAW_LEAK_A * f_yaw;        /* yaw: 泄漏积分(时间常数≈10s, 旧值 0.9 τ≈0.3s 使航向恒显示≈0, v1.12 调整) */
         if (f_yaw > 180.0f) f_yaw -= 360.0f; /* 显示范围 [-180,180) */
         else if (f_yaw < -180.0f) f_yaw += 360.0f;
     }
@@ -576,10 +583,16 @@ void MPU_Start(void *key_q)
  * 顶部标题 1 秒内显示最近一次摇动方向(上↑/下↓/左←/右→), 供摇动测试; 主体为 横滚/俯仰/航向. */
 void MPU_BalanceTick(void)
 {
+    static uint32_t last_draw = 0;
     char buf[24];
     const char *st = "平衡";
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     uint8_t shake = (mpu_shake_dir && (now - mpu_shake_at < 1000));
+
+    /* 帧率限制: ui_task 每圈(~20ms)调用一次, 整屏清屏+重绘+blit 约 6ms/帧太重,
+     * 10fps 对姿态显示足够流畅, 主循环让出时间给按键/音频 */
+    if (now - last_draw < 100) return;
+    last_draw = now;
 
     if (shake)
     {
