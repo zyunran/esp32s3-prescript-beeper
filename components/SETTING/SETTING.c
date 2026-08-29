@@ -431,8 +431,8 @@ static void set_info_render(void)
     {
         case 0:
         {
-            /* 版本号来自项目根目录 version.txt（例如 v1.11），不是硬编码宏；
-             * 每次发版改 version.txt 后重新编译即可。 */
+            /* 版本号来自 ESP-IDF 默认的 git describe(发版打 tag 后重新编译即生效);
+             * 根目录 version.txt 不参与构建(早期遗留文件) */
             const esp_app_desc_t *desc = esp_app_get_description();
             snprintf(buf, sizeof(buf), "%s %s\n%s %s\n开机 %u次",
                      desc ? desc->project_name : "oder",

@@ -11,6 +11,14 @@ An ESP32-S3 firmware for a desktop **pager**-shaped personal terminal: 284×76 h
 
 ---
 
+## v2.0 Changes
+
+- Hardware: buzzer polarity flipped for **high-level trigger modules** (GPIO15: high = beep, low = silent; pull-down keeps it silent at power-on); wiring table updated
+- Sound: oracle/instruction/alarm/todo glitch-decodes now play a rapid triple beep that **ends exactly as the decode completes** (aligned by remaining character count — no drift on long texts); timing tunable in `BUZZER.h`
+- Sound: all other glitch-decodes (weather/system info/network status/web & cloud commands) **stay silent**; same rule when skipping with OK
+- Change: **key sound reduced to Off/Audio** (Buzzer/Both removed; old settings migrate to Audio; device menu and web page in sync)
+- Versioning: the System-info page version comes from the git tag (ESP-IDF git describe); `version.txt` never took part in the build — stale comment fixed
+
 ## v1.20 Changes
 
 - Docs: repo-wide comment sweep, 20+ stale comments synced (architecture header, component list, submenu order, API list, AP-item naming); Chinese & English READMEs fully synchronized
