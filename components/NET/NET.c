@@ -399,6 +399,14 @@ void NET_Init(void)
     ESP_LOGI(TAG, "NET ready (radio OFF; 联网按需 NET_Connect; 配网热点需 联网->开启配网 手动开启)");
 }
 
+/* 当前配网热点状态(只读查询: 射频模式为 AP+STA 即视为开启) */
+uint8_t NET_ApOn(void)
+{
+    wifi_mode_t mode;
+    if (esp_wifi_get_mode(&mode) != ESP_OK) return 0;
+    return (mode == WIFI_MODE_APSTA) ? 1 : 0;
+}
+
 /* 开启配网: 手动开/关配网热点(纯 STA <-> AP+STA), 返回 1=已开 0=已关 */
 uint8_t NET_ApToggle(void)
 {

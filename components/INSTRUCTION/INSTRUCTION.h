@@ -40,6 +40,8 @@ uint8_t INS_PresetsEx(uint8_t font, char out[][INS_PRESET_LEN], uint8_t max_out,
 uint8_t INS_PresetsFromTextEx(uint8_t font, const char *text);      /* 保存指定字号指令库(换行文本) */
 void INS_Tick(void);                    /* 推进动画 + 蜂鸣, 每主循环调用一次 */
 uint8_t INS_Finished(void);             /* 1=本次破译已完成(全文已显示) */
+uint8_t INS_Decoding(void);             /* 1=乱码破译进行中(有内容且未显示完) */
+void INS_FinishNow(void);               /* 跳过动画直接显示原文(破译中确认键用; 空闲为空操作) */
 void INS_Exit(void);                    /* 提前退出破译, 回到 UI 主界面 */
 
 #endif

@@ -1029,6 +1029,31 @@ uint8_t INS_Finished(void)
     return (ins_scr_on && ins_scr_phase == 2);
 }
 
+uint8_t INS_Decoding(void)
+{
+    return (ins_scr_on && ins_scr_phase != 2);
+}
+
+/* 破译未完成时跳过动画: 直接揭示全文并收尾(音效同自然完成); 空闲/已完成为空操作 */
+void INS_FinishNow(void)
+{
+    uint8_t l, c;
+    if (!ins_scr_on || ins_scr_phase == 2) return;
+    ins_reveal_idx = ins_gl_total;
+    ins_xoff = 0;
+    for (l = 0; l < ins_gl_lines; l++)
+    {
+        for (c = 0; c < ins_gl_num[l]; c++)
+        {
+            ins_gl[l][c].slide = 0;
+        }
+    }
+    ins_scr_phase = 2;
+    ins_scr_render();
+    SOUND_Stop();                              /* 停进行音 */
+    BUZZER_Beep(3);                            /* 与自然破译完成一致: 三声哔 */
+}
+
 void INS_Exit(void)
 {
     ins_scr_on = 0;

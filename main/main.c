@@ -120,13 +120,15 @@ static void ui_enter_submenu(uint8_t kind, uint8_t cur)
     {
         UI_SubMenuInitItems(cfg->items, cfg->item_count);
         if (cur < cfg->item_count) UI_SubMenuSetCur(cur);
-        if (cfg->fn == UI_FN_NET)   /* 联网/云端开关项: 进入子菜单即把标签刷新为 开/关 实时状态 */
+        if (cfg->fn == UI_FN_NET)   /* 联网/云端/配网开关项: 进入子菜单即把标签刷新为 开/关 实时状态 */
         {
             char nbuf[16];
             snprintf(nbuf, sizeof(nbuf), "联网:%s", NET_SessionOn() ? "开" : "关");
             UI_SubMenuSetItem(UI_NET_CONNECT, nbuf);
             snprintf(nbuf, sizeof(nbuf), "云端:%s", CLOUD_GetOn() ? "开" : "关");
             UI_SubMenuSetItem(UI_NET_CLOUD, nbuf);
+            snprintf(nbuf, sizeof(nbuf), "配网:%s", NET_ApOn() ? "开" : "关");
+            UI_SubMenuSetItem(UI_NET_AP, nbuf);
         }
     }
     else
@@ -167,6 +169,13 @@ static void ui_pop(void)
     if (f.state == ST_SUB)
     {
         ui_enter_submenu(f.sub_kind, f.cur);
+    }
+    else if (f.state == ST_LOOM)
+    {
+        sub_kind = f.sub_kind;
+        ui_state = ST_LOOM;
+        LOOM_Enter();                    /* 平衡页整屏刷新覆盖了织机菜单: 重绘 */
+        if (f.cur <= 3) UI_SubMenuSetCur(f.cur);   /* 恢复织机菜单光标(如停在"平衡") */
     }
     else if (f.state == ST_TODO)
     {
@@ -425,9 +434,12 @@ static void on_event(uint8_t evt)
                         ui_push(ST_INS);                    /* 任意键可先退回; 结果会自动换在这屏 */
                     }
                 }
-                else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-开启配网: 开/关配网热点 */
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-配网: 开/关配网热点 */
                 {
                     uint8_t on = NET_ApToggle();
+                    char abuf[16];
+                    snprintf(abuf, sizeof(abuf), "配网:%s", on ? "开" : "关");
+                    UI_SubMenuSetItem(UI_NET_AP, abuf);   /* 标签就地刷新 */
                     if (on)
                     {
                         char m[68];   /* "热点已开 <SSID>/<8位随机密码>": SSID≤32B+密码8B+中文前后缀, 留足余量 */
@@ -641,6 +653,11 @@ static void on_event(uint8_t evt)
                 SET_InfoNav(evt);
                 break;
             }
+            if (evt == EVT_OK && INS_Decoding())   /* 乱码信息未完成: 确认=直接显示原文(再按退出) */
+            {
+                INS_FinishNow();
+                break;
+            }
             set_info_active = 0;
             INS_Exit();
             ui_pop();
@@ -695,7 +712,12 @@ static void on_event(uint8_t evt)
             break;
 
         case ST_INS:
-            INS_Exit();                  /* 破译中任意键返回 */
+            if (evt == EVT_OK && INS_Decoding())
+            {
+                INS_FinishNow();     /* 破译中确认: 跳过动画直接显示原文, 再按确认才退出 */
+                break;
+            }
+            INS_Exit();                  /* 已显示完(或非确认键): 任意键返回 */
             egg_confirm = 0;             /* 手动按键退出: 取消彩蛋确认自动回主界面 */
             egg_hold_t = 0;
             ui_pop();
@@ -951,9 +973,9 @@ static void ui_task(void *arg)
                     }
                 }
             }
-            if (ui_state == ST_MAIN)
+            if (ui_state == ST_MAIN || ui_state == ST_SUB)   /* 子菜单与主菜单同布局: 左侧时间/天气/图标同步刷新 */
             {
-                if (LOOM_TimeOn())
+                if (ui_state == ST_MAIN && LOOM_TimeOn())
                 {
                     /* 彩蛋「纺织时间」(LOOM 组件): 现实1秒=显示1小时, 显示节流 ~5次/秒防刷屏打满 */
                     char d[8], t[12], w[8];
