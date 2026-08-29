@@ -1,11 +1,15 @@
 /* RTOS 多任务架构:
  *  - input_task: GPIO 沿检测读按键 -> 事件队列(高优先级, 独立于界面)
  *  - ui_task:    收事件按界面状态机驱动, 并推进各功能(破译/抽卡/计时/神谕推送)
+ *  - cloud_task: OneNET MQTT 会话(CLOUD 组件, 内部建), 属性/事件上报 + display_cmd 下发
  *  - 待机: 息屏后 ui_task 进浅睡眠(50ms tick 查按键/闹钟, STANDBY_TICK_US);
- *    路径1 完全按需联网: 唤醒不再自动重连 WiFi, 联网仅由 联网->连接网络 手动开启(会话内校时/天气)
+ *    路径1 完全按需联网: 唤醒不再自动重连 WiFi, 联网仅由 联网->连接网络 手动开启(会话内校时/天气);
+ *    「远程在线」开启时 CLOUD_KeepAlive() 阻止待机断网, 云端持续在线
  * 功能已拆分为组件: UI(菜单/配置+LOOM彩蛋) / INSTRUCTION(破译+蜂鸣+答案) / GACHA(抽卡) / NET(联网天气)
- *   / AUDIO(蜂鸣+音频) / SETTING(设置+NVS+神谕) / TIMER(倒计时/番茄钟/闹钟)/ POWER(电源+电量)
+ *   / AUDIO(蜂鸣+音频) / SETTING(设置+NVS+神谕) / TIMER(倒计时/番茄钟/闹钟) / POWER(电源+电量)
+ *   / CLOUD(OneNET MQTT) / WEB(配置页) / OTA(双分区升级) / MPU6050(摇动) / DS1302(RTC) / COMMON(公共头)
  * 主菜单标题与子菜单项文字集中配置于 ui_menu_cfg(ui.c), 改那里即可改文字
+ * (主菜单序: 神谕/TTL协议/待办/联网/观测/询问/使用者/设置; 联网含 云端开关与 OTA)
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -374,7 +378,7 @@ static void on_event(uint8_t evt)
                         break;
                     case UI_FN_SETTING:              /* 设置 -> 设置子菜单(项由组件生成) */
                     case UI_FN_NET:                  /* 联网 -> 自定义子菜单 */
-                    case UI_FN_TTL:                  /* TTL协议 -> 跨越时间/锚定时间/退出 */
+                    case UI_FN_TTL:                  /* TTL协议 -> 闹钟/计时/番茄钟/退出 */
                     case UI_FN_USER:                 /* 使用者 -> 名称列表, 高亮当前使用者 */
                     case UI_FN_SUBMENU:              /* 其余 -> 通用子菜单 {title}01..NN */
                         ui_enter_main_submenu(sel, 0);
@@ -422,7 +426,7 @@ static void on_event(uint8_t evt)
                     }
                     else if (!NET_GetSsid()[0])   /* 从未配过 WiFi(纯 AP 配网模式): 引导配网 */
                     {
-                        UI_FullScreen("未配置WiFi", "先 开启配网 再连手机设WiFi");
+                        UI_FullScreen("未配置WiFi", "先开 配网 再连手机设WiFi");
                         ui_push(ST_INFO);                    /* 任意键回联网子菜单 */
                     }
                     else   /* 开启: 立即反馈"正在连接", 结果(已连接/未连上)由 ui_task 挂起回调在同一屏换内容 */
@@ -441,11 +445,11 @@ static void on_event(uint8_t evt)
                     {
                         char m[68];   /* "热点已开 <SSID>/<8位随机密码>": SSID≤32B+密码8B+中文前后缀, 留足余量 */
                         snprintf(m, sizeof(m), "热点已开 %s/%s", NET_GetApSsid(), NET_GetApPass());
-                        UI_FullScreen("开启配网", m);
+                        UI_FullScreen("配网", m);
                     }
                     else
                     {
-                        UI_FullScreen("开启配网", "热点已关");
+                        UI_FullScreen("配网", "热点已关");
                     }
                     ui_push(ST_INFO);                   /* 任意键回联网子菜单 */
                 }
@@ -550,7 +554,7 @@ static void on_event(uint8_t evt)
                         SET_SubmenuSelect(sel);
                     }
                 }
-                else if (cfg->fn == UI_FN_TTL)       /* TTL协议: 跨越时间(倒计时)/锚定时间(闹钟) */
+                else if (cfg->fn == UI_FN_TTL)       /* TTL协议: 锚定时间(闹钟)/跨越时间(倒计时) */
                 {
                     if (sel == UI_TTL_FUTURE)       /* 跨越时间 -> 倒计时 */
                     {

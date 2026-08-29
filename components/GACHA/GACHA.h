@@ -55,7 +55,7 @@ typedef struct {
 
 /* ================= API(由 RTOS 主任务驱动, 不阻塞界面; httpd 侧图鉴接口首次调用含 NVS 加载) =================
  * 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN/EVT_LONG_OK 一致: 1=上 2=确认 3=下 4=OK长按
- * 流程: Enter 渲染"十连/拼点/单抽/积分/图鉴/退出"子菜单 -> OnEvent 选十连进动画
+ * 流程: Enter 渲染"十连/单抽/拼点/图鉴/积分/退出"子菜单 -> OnEvent 选十连进动画
  *       -> Tick 推进扫描/语音/结果滚动 -> 结果确认回子菜单, 子菜单"退出"回主界面 */
 void    GACHA_Enter(void);       /* 进入抽卡界面(渲染子菜单) */
 void    GACHA_ForceExit(void);   /* 强制退出(OK 长按返回主界面) */

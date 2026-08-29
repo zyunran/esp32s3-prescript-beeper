@@ -3,16 +3,19 @@
  * (会话空闲超时/手动断/待机即射频停, 此时本服务不可达)。每个请求都 NET_Touch() 续期会话。
  * 联网后手机/PC 浏览器访问 http://<esp32-ip>/ 打开配置页, 可:
  *   - 增删改指令库(每行一条, 支持 {#RRGGBB}/{} {RAND:1-10} {TIMER})
- *   - 设置闹钟(每天重复/按星期/一次性, 最多 3 个) / 待办管理
- *   - 改 UI 主题色(背景/菜单/选中框/图标/时钟/日期) / 音量/蜂鸣/熄屏时长
- *   - 改 WiFi/城市/天气私钥, 扫描附近 WiFi; 设使用者名称
- *   - 设备状态(电量/堆/开机次数/IP/时间/天气), 下发指令(含 made in heaven 彩蛋), 拼点人格图鉴
- * 全部写入 NVS 持久化(命名空间: 指令"ins" / 闹钟"alarm" / 颜色"cfg" / 设置"set" 等), 重启后仍生效.
- * API:
- *   GET  /api/cfg      -> 当前配置 JSON
- *   POST /api/cfg      -> 接收 JSON 应用并保存 {"ok":1}
- *   POST /api/beep|reboot|scan|send     -> 蜂鸣测试/重启/WiFi扫描/下发指令
- *   GET  /api/status|gacha|todo  POST /api/todo -> 设备状态/拼点图鉴/待办增删查
+ *   - 设置闹钟(每天重复/按星期/一次性, 最多 16 个) / 待办管理(含提醒时间)
+ *   - 改 UI 主题色(背景/菜单/选中框/图标/时钟/日期) / 音量/蜂鸣/熄屏时长/光标/主题预设
+ *   - 改 WiFi/城市/天气私钥, 扫描附近 WiFi; 管理使用者列表; 破译参数与字号
+ *   - 云端(OneNET)三元组与「远程在线」开关(/api/cloud)
+ *   - OTA 固件直链与 SHA256; 设备状态(电量/堆/开机次数/IP/时间/天气)
+ *   - 下发指令(含 made in heaven 彩蛋), 拼点人格图鉴
+ * 全部写入 NVS 持久化(命名空间: 指令"ins" / 闹钟"alarm" / 颜色"cfg" / 设置"set" / 云端"cloud" 等), 重启后仍生效.
+ * API(写接口全部要求 X-Web-Token 头, token 由 GET /api/token 下发):
+ *   GET  /                      -> 配置页(captive portal 探测路径同页)
+ *   GET  /api/token             -> CSRF token
+ *   GET  /api/cfg      POST /api/cfg     -> 配置读写(JSON)
+ *   GET  /api/status|gacha|todo|cloud|scanres   POST /api/todo|cloud  -> 状态/图鉴/待办/云端/扫描结果
+ *   POST /api/beep|reboot|scan|send|user|clearwifi  -> 蜂鸣/重启/扫WiFi/下发指令/加使用者/清WiFi
  */
 #include "web.h"
 #include "esp_http_server.h"

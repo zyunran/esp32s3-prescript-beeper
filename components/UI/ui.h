@@ -99,7 +99,7 @@ typedef enum {
     UI_FN_SUBMENU,    /* 通用子菜单: {title}01..NN + 退出 */
     UI_FN_NET,        /* 联网(联网开关/开启配网/查看天气/显示IP; 子菜单项在 ui.c cfg_net_items 配置) */
     UI_FN_SETTING,    /* 设置(子菜单项由 SETTING.c settings_items_refresh 生成) */
-    UI_FN_TTL,        /* TTL协议: 跨越时间(倒计时)/锚定时间(闹钟)/退出 */
+    UI_FN_TTL,        /* TTL协议: 锚定时间(闹钟)/跨越时间(倒计时)/退出 */
     UI_FN_TODO,       /* 待办/指令日志: 待执行指令列表, 完成即 PASS */
     UI_FN_USER,       /* 使用者: 当前使用者名称选择 */
 } ui_fn_t;

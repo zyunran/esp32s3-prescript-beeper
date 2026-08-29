@@ -1,4 +1,4 @@
-/* GACHA 组件: 抽卡界面(主菜单"观测"直接进入, 子菜单: 十连/拼点/单抽/积分/图鉴/退出)
+/* GACHA 组件: 抽卡界面(主菜单"观测"直接进入, 子菜单: 十连/单抽/拼点/图鉴/积分/退出)
  * 非阻塞状态机(由 RTOS 主任务驱动):
  *   - GC_MENU:   十连/单抽/拼点/图鉴/积分/退出 子菜单(复用 UI 通用子菜单)
  *   - GC_ANIM:   竖线从左到右扫过 10 个无色方框并逐个染成该抽稀有度色(时间戳驱动)
@@ -24,7 +24,7 @@
 
 #define GACHA_TEN_N      10     /* 十连次数 */
 #define GACHA_POINTS_PULL 10    /* 积分抽: 10积分抽一次 */
-#define GACHA_MENU_CNT   6      /* 子菜单项数: 十连/拼点/单抽/积分/图鉴/退出 */
+#define GACHA_MENU_CNT   6      /* 子菜单项数: 十连/单抽/拼点/图鉴/积分/退出 */
 
 /* 事件码与 main.c 的 EVT_UP/EVT_OK/EVT_DOWN 一致 */
 #define GC_EVT_UP        1
@@ -1173,7 +1173,7 @@ static void gacha_result_tick(void)
 }
 
 
-/* ================= 子界面菜单(十连/拼点/单抽/积分/图鉴/退出) ================= */
+/* ================= 子界面菜单(十连/单抽/拼点/图鉴/积分/退出) ================= */
 static const char *gacha_menu_items[GACHA_MENU_CNT] = { "十连", "单抽", "拼点", "图鉴", "积分", "退出" };
 #define GC_MENU_COIN   2              /* "拼点"项索引 */
 #define GC_MENU_PULL   1              /* "积分抽"项索引 */

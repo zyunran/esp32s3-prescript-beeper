@@ -33,7 +33,7 @@
 static const char *TAG = "NET";
 
 /* ================= 可调参数(默认值; 运行期可用 WEB 配置页改, 存 NVS "net") =================
- * 隐私说明: 工程不内置任何私人 WiFi / 天气 API key —— 首次须经 联网->开启配网 用网页保存,
+ * 隐私说明: 工程不内置任何私人 WiFi / 天气 API key —— 首次须经 联网->配网 用网页保存,
  * 或直接写入 NVS "net" 命名空间(ssid/pass/city/key). 防止源码公开时泄露个人凭据. */
 #define NET_CITY_DEFAULT    "chengdu"     /* 心知天气城市(拼音, 如 beijing/shanghai) */
 #define NET_AP_SSID         "ESP32ODERAP"     /* 配网/配置页热点(手机连上后开 192.168.4.1) */
@@ -390,13 +390,13 @@ void NET_Init(void)
         wcfg.sta.password[pl] = '\0';
     }
 
-    /* 默认纯 STA(不开配网热点, 省电/隐私); 配网靠 联网->开启配网 手动开热点 */
+    /* 默认纯 STA(不开配网热点, 省电/隐私); 配网靠 联网->配网 手动开热点 */
     esp_wifi_set_mode(WIFI_MODE_STA);
     if (net_cfg_valid) esp_wifi_set_config(WIFI_IF_STA, &wcfg);
 
     /* 路径1 完全按需: 射频在此不启动(不自动连网、不挂 SNTP) —— 默认离线, 零功耗/零暴露面.
      * 由 联网->连接网络(NET_Connect) 按需打开射频并校时. */
-    ESP_LOGI(TAG, "NET ready (radio OFF; 联网按需 NET_Connect; 配网热点需 联网->开启配网 手动开启)");
+    ESP_LOGI(TAG, "NET ready (radio OFF; 联网按需 NET_Connect; 配网热点需 联网->配网 手动开启)");
 }
 
 /* 当前配网热点状态(只读查询: 射频模式为 AP+STA 即视为开启) */
@@ -619,7 +619,7 @@ uint8_t NET_TimeOk(void) { return net_time_ok; }
 void NET_WifiStop(void)
 {
     net_radio_stop();
-    esp_wifi_set_mode(WIFI_MODE_STA);   /* mode 归位 STA: 若此前开过配网热点, 避免残留 APSTA 配置使再按 开启配网 误判为"已开" */
+    esp_wifi_set_mode(WIFI_MODE_STA);   /* mode 归位 STA: 若此前开过配网热点, 避免残留 APSTA 配置使再按 配网 误判为"已开" */
     if (net_sntp_started) esp_sntp_stop();   /* 会话结束停 SNTP(仅当启用过才停, 防未初始化调用) */
     net_wifi_ok = 0;
     net_weather_fetched = 0;   /* 下次会话重新拉天气 */
