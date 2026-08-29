@@ -267,7 +267,6 @@ static void settings_items_refresh(void)
              "接收 %d条", set_oracle_n);
     snprintf(settings_buf[SET_IDX_ORACLE_WIN], sizeof(settings_buf[0]),
              "指令 %s", set_oracle_win_name[set_oracle_win]);
-    snprintf(settings_buf[SET_IDX_BAL], sizeof(settings_buf[0]), "平衡");
     snprintf(settings_buf[SET_IDX_INFO], sizeof(settings_buf[0]), "系统信息");
     snprintf(settings_buf[SET_IDX_RESET], sizeof(settings_buf[0]), "初始化");
     snprintf(settings_buf[SET_IDX_INS_FONT], sizeof(settings_buf[0]),
@@ -387,7 +386,7 @@ void SET_SubmenuSelect(uint8_t sel)
                  "主题 %s", set_theme_name[set_theme]);
         UI_SubMenuSetItem(SET_IDX_THEME, settings_buf[SET_IDX_THEME]);
     }
-    /* SET_IDX_INFO(系统信息)/SET_IDX_BAL(平衡)/SET_IDX_RESET(初始化) 由 main.c 处理 */
+    /* SET_IDX_INFO(系统信息)/SET_IDX_RESET(初始化) 由 main.c 处理 */
 }
 
 /* ================= 系统信息页(乱码破译格式, 3 页上下翻页) =================

@@ -10,8 +10,8 @@
 #include <string.h>
 #include <time.h>
 
-#define LOOM_ITEM_N   3
-static const char *const loom_items[LOOM_ITEM_N] = { "纺织时间", "纺织记忆", "退出" };
+#define LOOM_ITEM_N   4
+static const char *const loom_items[LOOM_ITEM_N] = { "纺织时间", "纺织记忆", "平衡", "退出" };
 
 static uint8_t loom_busy = 0;
 
@@ -113,7 +113,7 @@ uint8_t LOOM_Key(uint8_t up, uint8_t ok, uint8_t down, uint8_t lng)
     else if (ok)
     {
         uint8_t sel = UI_SubMenuCur();
-        if (sel == 2)                          /* 退出 */
+        if (sel == 3)                          /* 退出 */
         {
             loom_busy = 0;
             return LOOM_KEY_EXIT;
@@ -129,6 +129,10 @@ uint8_t LOOM_Key(uint8_t up, uint8_t ok, uint8_t down, uint8_t lng)
             UI_BoxModeSet(UI_BoxModeGet() ? 0 : 1);
             loom_busy = 0;
             return LOOM_KEY_MEMORY;
+        }
+        if (sel == 2)                          /* 平衡: main 进 MPU 姿态页; 不清 busy, 页内返回回本菜单 */
+        {
+            return LOOM_KEY_BAL;
         }
     }
     return LOOM_KEY_NONE;

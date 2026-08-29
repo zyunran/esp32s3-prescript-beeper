@@ -534,10 +534,7 @@ static void on_event(uint8_t evt)
                         SET_ShowInfo();
                         ui_push(ST_INFO);
                     }
-                    else if (sel == SET_IDX_BAL)   /* 平衡: MPU6050 六轴姿态实时页 */
-                    {
-                        ui_push(ST_MPU);
-                    }
+                    /* 平衡 自 v1.16 移至 织机->平衡 */
                     else if (sel == SET_IDX_RESET)   /* 初始化: 确认后清NVS重启 */
                     {
                         reset_pending = 1;
@@ -676,6 +673,10 @@ static void on_event(uint8_t evt)
             else if (lr == LOOM_KEY_MEMORY)    /* 白框滤镜已切换: 清栈回主界面立即反映 */
             {
                 ui_to_main();
+            }
+            else if (lr == LOOM_KEY_BAL)       /* 织机->平衡: 进 MPU 姿态页, 页内返回回织机菜单 */
+            {
+                ui_push(ST_MPU);
             }
             break;
         }

@@ -3,21 +3,21 @@
 
 #include <stdint.h>
 
-/* 设置子菜单项索引(与 SETTING.c settings_items_refresh 生成顺序一致) */
+/* 设置子菜单项索引(顺序=显示顺序; v1.16 按组重排: 声音->显示->推送->交互->工具;
+ * 平衡自 v1.16 移入 织机 菜单) */
 typedef enum {
-    SET_IDX_SCREEN = 0,    /* 息屏时长 */
-    SET_IDX_VOL,           /* 音量 */
+    SET_IDX_VOL = 0,       /* 音量 */
     SET_IDX_BEEP,          /* 蜂鸣器开/关 */
     SET_IDX_KEY,           /* 按键音: 关/蜂鸣/音频/双 */
-    SET_IDX_SHAKE,         /* 摇动翻页开/关 */
+    SET_IDX_SCREEN,        /* 息屏时长 */
+    SET_IDX_THEME,         /* 主题预设: 柔和绿/赛博青/深夜黑白 */
+    SET_IDX_CURSOR,        /* 光标样式 */
+    SET_IDX_INS_FONT,      /* 破译字号 */
     SET_IDX_ORACLE_N,      /* 神谕每日推送次数 */
     SET_IDX_ORACLE_WIN,    /* 神谕时段 */
-    SET_IDX_BAL,           /* 平衡(MPU6050 六轴姿态) */
+    SET_IDX_SHAKE,         /* 摇动翻页开/关 */
     SET_IDX_INFO,          /* 系统信息 */
     SET_IDX_RESET,         /* 初始化 */
-    SET_IDX_INS_FONT,      /* 破译字号 */
-    SET_IDX_CURSOR,        /* 光标样式 */
-    SET_IDX_THEME,         /* 主题预设: 柔和绿/赛博青/深夜黑白 */
     SET_IDX_EXIT,          /* 退出 */
     SET_IDX_COUNT,         /* 含"退出"的项数 */
 } setting_idx_t;
