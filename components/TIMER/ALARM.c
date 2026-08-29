@@ -608,8 +608,9 @@ uint8_t ALM_Check(void)
     return r;
 }
 
-/* 闹钟到点: 乱码破译显示一条闹钟专属指令(自动加"致当前使用者") */
+/* 闹钟到点: 乱码破译显示一条闹钟专属指令(自动加"致当前使用者"), 结尾三连急促蜂鸣 */
 void ALM_Show(void)
 {
+    INS_BeepNext(1);
     INS_ShowIns(alm_presets[esp_random() % ALM_PRESET_COUNT]);
 }

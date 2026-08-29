@@ -364,8 +364,9 @@ static void on_event(uint8_t evt)
                 switch (cfg->fn)
                 {
                     case UI_FN_INS:                  /* 神谕 -> 指令破译 */
-                        INS_ShowRandom();
-                        ui_push(ST_INS);
+                    INS_BeepNext(1);   /* 指令: 结尾三连急促蜂鸣 */
+                    INS_ShowRandom();
+                    ui_push(ST_INS);
                         break;
                     case UI_FN_ASK:                  /* 询问 -> 答案之书(分类子菜单) */
                         ANS_Enter();
@@ -825,7 +826,8 @@ static void ui_task(void *arg)
                     daily_last[sizeof(daily_last) - 1] = '\0';
                     ORACLE_DsignInc();   /* 每日签计数(已收拢至 ORACLE 组件) */
                     CLOUD_NotifyEvent(CLOUD_EVT_DAILY, NULL);   /* 云端事件: 每日神谕已推送 */
-                    INS_ShowOracle();   /* 神喻破译: 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
+                    INS_BeepNext(1);   /* 每日签: 结尾三连急促蜂鸣 */
+                    INS_ShowRandom();
                     ui_push(ST_INS);
                     PWR_Wake(now);
                 }
@@ -861,7 +863,8 @@ static void ui_task(void *arg)
                 ORACLE_Delivered();
                 if (ui_state == ST_MAIN)
                 {
-                    INS_ShowOracle();   /* 神谕定时推送: 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
+                    INS_BeepNext(1);   /* 神谕定时推送: 结尾三连急促蜂鸣 */
+                    INS_ShowRandom();
                     ui_push(ST_INS);
                     PWR_Wake(now);
                 }
@@ -878,9 +881,9 @@ static void ui_task(void *arg)
             {
                 CLOUD_NotifyEvent(CLOUD_EVT_TODO, TODO_RemindText());   /* 云端事件: 待办提醒(msg=待办文本) */
                 ui_to_main();
+                INS_BeepNext(1);   /* 待办提醒: 结尾三连急促蜂鸣(与破译完成对齐, 替代旧的独立三响) */
                 INS_Show(TODO_RemindText());
                 ui_push(ST_INS);
-                BUZZER_Beep(3);
                 PWR_Wake(now);
             }
         }

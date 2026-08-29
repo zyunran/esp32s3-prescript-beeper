@@ -2,7 +2,7 @@
  *  - 全屏显示一条指令文本: 先全乱码再逐字"破译"成真字
  *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {RAND:min-max} 随机数 / {TIMER} 内联计时占位
  *  - 乱码全取 ASCII 且字符数≠真字; 已解码字带滑入位移, 小概率回退乱码
- *  - 解码期间不蜂鸣(语音进行音由扬声器播); 仅神喻破译在结尾排程三连急促哔, 响完恰破译完
+ *  - 解码期间不蜂鸣(语音进行音由扬声器播); 神喻/指令/闹钟/待办破译在结尾排程三连急促哔, 响完恰破译完
  * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit/UI_RenderScreen)。
  */
 #include "INSTRUCTION.h"
@@ -160,9 +160,9 @@ static int8_t   ins_xoff;                     /* 全乱码阶段整块左右偏�
 static uint32_t ins_scr_last;                 /* 上次乱码帧刷新时刻 ms */
 static uint32_t ins_reveal_last;              /* 上次逐字揭示时刻 ms */
 
-/* 结尾三连急促蜂鸣(仅神喻破译): 揭示每字间隔固定, 完成时刻可预知,
+/* 结尾三连急促蜂鸣: 揭示每字间隔固定, 完成时刻可预知,
  * 排程三连响使其恰在"最后一字揭示完成"瞬间收尾(响完即破译完) */
-static uint8_t  ins_beep_next;                /* 下一次 Show 带结尾蜂鸣(神喻入口置 1, INS_Show 消费) */
+static uint8_t  ins_beep_next;                /* 下一次 Show 带结尾蜂鸣(带蜂鸣入口经 INS_BeepNext 置 1, INS_Show 消费) */
 static uint8_t  ins_beep_armed;               /* 本次破译带结尾蜂鸣 */
 static uint8_t  ins_beep_fired;               /* 结尾蜂鸣已排程 */
 static uint32_t ins_beep_deadline;            /* 破译完成时刻 ms(揭示阶段起始时算出) */
@@ -925,7 +925,7 @@ void INS_Show(const char *text)
     ins_reveal_last = ins_now_ms();
     ins_scr_on = 1;
 
-    /* 结尾蜂鸣只跟一次 Show: 神喻入口置 ins_beep_next, 其余破译(指令/系统信息等)静音 */
+    /* 结尾蜂鸣只跟一次 Show: 带蜂鸣入口(神喻/指令/闹钟/待办)经 INS_BeepNext 置位, 其余破译静音 */
     ins_beep_armed = ins_beep_next;
     ins_beep_next = 0;
     ins_beep_fired = 0;
@@ -1037,11 +1037,10 @@ void INS_ShowRandom(void)
     ins_unlock();
 }
 
-/* 神喻破译(每日签/神谕定时推送专用): 随机指令 + 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
-void INS_ShowOracle(void)
+/* 下一次破译显示带结尾三连急促蜂鸣(on=1 置位, 0 清除; INS_Show 消费一次后自动失效) */
+void INS_BeepNext(uint8_t on)
 {
-    ins_beep_next = 1;
-    INS_ShowRandom();
+    ins_beep_next = on ? 1 : 0;
 }
 
 void INS_Tick(void)
