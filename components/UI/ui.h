@@ -65,21 +65,23 @@ typedef enum {
  * 菜单项索引与子菜单项索引均枚举化, 配置与处理共用同一枚举, 增删项不会静默错位 */
 typedef enum {
     UI_MENU_INS = 0,      /* 神谕 */
-    UI_MENU_ASK,          /* 询问(答案之书) */
-    UI_MENU_GACHA,        /* 观测 */
+    UI_MENU_TTL,          /* TTL协议(计时/闹钟/番茄钟: 高频实用, 紧随签名功能) */
     UI_MENU_TODO,         /* 待办 */
+    UI_MENU_NET,          /* 联网(连网/云端/配网/天气/IP/OTA: 一切需网络的功能) */
+    UI_MENU_GACHA,        /* 观测 */
+    UI_MENU_ASK,          /* 询问(答案之书) */
     UI_MENU_USER,         /* 使用者(运行期可变) */
     UI_MENU_SETTING,      /* 设置 */
-    UI_MENU_NET,          /* 联网 */
-    UI_MENU_TTL,          /* TTL协议 */
     UI_MENU_COUNT,
 } ui_menu_idx_t;
 
 typedef enum {
     UI_NET_CONNECT = 0,   /* 联网开关(开启/关闭联网会话) */
+    UI_NET_CLOUD,         /* 连接云端(OneNET 远程在线 开/关) */
     UI_NET_AP,            /* 开启配网 */
     UI_NET_WEATHER,       /* 查看天气 */
     UI_NET_IP,            /* 显示IP */
+    UI_NET_UPDATE,        /* 版本更新(OTA, 需网络故归入联网) */
     UI_NET_EXIT,          /* 退出 */
 } ui_net_idx_t;
 

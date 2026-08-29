@@ -77,9 +77,11 @@ static const uint8_t icon_cmd[] = {
 /* 自定义子菜单项(集中配置, 改这里即可改文字) */
 static const char *cfg_net_items[] = {
     [UI_NET_CONNECT] = "连接网络",   /* 标签进入子菜单后由 UI_SubMenuSetItem 动态改"联网:开/关" */
+    [UI_NET_CLOUD]   = "连接云端",   /* 动态改"云端:开/关"(OneNET 远程在线) */
     [UI_NET_AP]      = "开启配网",
     [UI_NET_WEATHER] = "查看天气",
     [UI_NET_IP]      = "显示IP",
+    [UI_NET_UPDATE]  = "版本更新",   /* OTA(需网络, v1.15 自设置移入) */
     [UI_NET_EXIT]    = "退出",
 };
 static const char *cfg_ttl_items[] = {
@@ -206,6 +208,22 @@ const char *const *UI_UserList(uint8_t *count)
     return (const char *const *)ui_user_ptr;
 }
 
+/* 主菜单配置表: 数组顺序 = 枚举序 = 右侧菜单显示顺序
+ * (v1.15 重排: TTL/待办/联网 前移; 使用者保留主菜单, 仍居设置之前) */
+static char ui_user_title[UI_USER_NAME_MAX] = "使用者";   /* 主菜单「使用者」项动态标题 = 当前使用者名(UI_SetUserTitle 更新) */
+
+ui_menu_cfg_t ui_menu_cfg[UI_MENU_COUNT] = {
+    [UI_MENU_INS]     = { "神谕", UI_FN_INS,      0, NULL,              0 },
+    [UI_MENU_TTL]     = { "TTL协议", UI_FN_TTL,   0, cfg_ttl_items,     UI_TTL_EXIT + 1 },
+    [UI_MENU_TODO]    = { "待办", UI_FN_TODO,     0, NULL,              0 },
+    [UI_MENU_NET]     = { "联网", UI_FN_NET,      0, cfg_net_items,     UI_NET_EXIT + 1 },
+    [UI_MENU_GACHA]   = { "观测", UI_FN_GACHA,    0, NULL,              0 },
+    [UI_MENU_ASK]     = { "询问", UI_FN_ASK,      0, NULL,              0 },
+    [UI_MENU_USER]    = { ui_user_title, UI_FN_USER, 0, NULL, 0 },   /* items/item_count 由 UI_UserInit 运行时填 */
+    [UI_MENU_SETTING] = { "设置", UI_FN_SETTING,  0, NULL,              0 },
+    /* 「织机」彩蛋自 v1.03 移出主菜单: 主界面 Konami 手势 上上下下左右左右 解锁(LOOM, 已并入 UI 组件) */
+};
+
 /* 进入"使用者"子菜单: 锁内快照当前列表初始化子菜单, 并高亮当前使用者名
  * (cur_user 由调用方传入 INS_UserName() 快照; NULL/空串不高亮).
  * 旧实现(main.c)直接读 ui_menu_cfg 指针表, 与 httpd 的 UI_UserAdd 无锁并发 */
@@ -227,20 +245,6 @@ void UI_UserMenuEnter(const char *cur_user)
     }
     ui_user_unlock();
 }
-
-static char ui_user_title[UI_USER_NAME_MAX] = "使用者";   /* 主菜单「使用者」项动态标题 = 当前使用者名(UI_SetUserTitle 更新) */
-
-ui_menu_cfg_t ui_menu_cfg[UI_MENU_COUNT] = {
-    [UI_MENU_INS]     = { "神谕", UI_FN_INS,      0, NULL,              0 },
-    [UI_MENU_ASK]     = { "询问", UI_FN_ASK,      0, NULL,              0 },
-    [UI_MENU_GACHA]   = { "观测", UI_FN_GACHA,    0, NULL,              0 },
-    [UI_MENU_TODO]    = { "待办", UI_FN_TODO,     0, NULL,              0 },
-    [UI_MENU_USER]    = { ui_user_title, UI_FN_USER, 0, NULL, 0 },   /* items/item_count 由 UI_UserInit 运行时填 */
-    [UI_MENU_SETTING] = { "设置", UI_FN_SETTING,  0, NULL,              0 },
-    [UI_MENU_NET]     = { "联网", UI_FN_NET,      0, cfg_net_items,     UI_NET_EXIT + 1 },
-    /* 「织机」彩蛋自 v1.03 移出主菜单: 主界面 Konami 手势 上上下下左右左右 解锁(LOOM, 已并入 UI 组件) */
-    [UI_MENU_TTL]     = { "TTL协议", UI_FN_TTL,   0, cfg_ttl_items,     UI_TTL_EXIT + 1 },
-};
 
 /* 主菜单「使用者」项标题 = 当前使用者名(动态缓冲, 下次渲染生效) */
 void UI_SetUserTitle(const char *name)

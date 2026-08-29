@@ -38,6 +38,7 @@ void CLOUD_GetConfig(cloud_cfg_t *out);      /* 锁内快照(WEB 读取用) */
 void CLOUD_SetConfig(const cloud_cfg_t *in); /* 保存 NVS + 通知任务按新配置重建会话(WEB 保存用) */
 uint8_t CLOUD_IsOnline(void);                /* 1=MQTT 已连接 OneNET */
 uint8_t CLOUD_KeepAlive(void);               /* 1=云端会话保持中(ui_task 待机门控: 开启且已拉起客户端) */
+uint8_t CLOUD_GetOn(void);                   /* 「远程在线」开关当前值(联网子菜单标签用) */
 void CLOUD_NotifyEvent(cloud_evt_t e, const char *msg); /* 事件上报入口(任意任务; 非阻塞, 未启用/队满即丢) */
 uint8_t CLOUD_TakeCmd(char *buf, size_t n);  /* 取云端下发显示指令(取走即清), 1=有 */
 

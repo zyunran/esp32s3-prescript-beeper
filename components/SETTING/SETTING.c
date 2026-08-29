@@ -276,7 +276,6 @@ static void settings_items_refresh(void)
              "光标 %s", set_cursor_name[set_cursor]);
     snprintf(settings_buf[SET_IDX_THEME], sizeof(settings_buf[0]),
              "主题 %s", set_theme_name[set_theme]);
-    snprintf(settings_buf[SET_IDX_UPDATE], sizeof(settings_buf[0]), "版本更新");
     strcpy(settings_buf[SET_IDX_EXIT], "退出");
     for (i = 0; i < SET_IDX_COUNT; i++)
     {
@@ -388,7 +387,7 @@ void SET_SubmenuSelect(uint8_t sel)
                  "主题 %s", set_theme_name[set_theme]);
         UI_SubMenuSetItem(SET_IDX_THEME, settings_buf[SET_IDX_THEME]);
     }
-    /* SET_IDX_INFO(系统信息) 由 main.c 处理: 显示全屏信息页 */
+    /* SET_IDX_INFO(系统信息)/SET_IDX_BAL(平衡)/SET_IDX_RESET(初始化) 由 main.c 处理 */
 }
 
 /* ================= 系统信息页(乱码破译格式, 3 页上下翻页) =================

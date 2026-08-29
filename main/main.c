@@ -120,11 +120,13 @@ static void ui_enter_submenu(uint8_t kind, uint8_t cur)
     {
         UI_SubMenuInitItems(cfg->items, cfg->item_count);
         if (cur < cfg->item_count) UI_SubMenuSetCur(cur);
-        if (cfg->fn == UI_FN_NET)   /* 联网开关项: 进入子菜单即把标签刷新为 开/关 实时状态 */
+        if (cfg->fn == UI_FN_NET)   /* 联网/云端开关项: 进入子菜单即把标签刷新为 开/关 实时状态 */
         {
             char nbuf[16];
             snprintf(nbuf, sizeof(nbuf), "联网:%s", NET_SessionOn() ? "开" : "关");
             UI_SubMenuSetItem(UI_NET_CONNECT, nbuf);
+            snprintf(nbuf, sizeof(nbuf), "云端:%s", CLOUD_GetOn() ? "开" : "关");
+            UI_SubMenuSetItem(UI_NET_CLOUD, nbuf);
         }
     }
     else
@@ -483,6 +485,47 @@ static void on_event(uint8_t evt)
                 {
                     show_ip_screen();   /* "IP:xxx" 或 "未联网"(乱码显示, 任意键返回) */
                 }
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_CLOUD)  /* 联网-连接云端: 开/关 OneNET 远程在线 */
+                {
+                    cloud_cfg_t c;
+                    uint8_t on;
+                    CLOUD_GetConfig(&c);
+                    on = c.on ? 0 : 1;
+                    c.on = on;
+                    CLOUD_SetConfig(&c);   /* 存 NVS + 云任务按新开关 自动重连/收掉会话 */
+                    {
+                        char nbuf[16], m[64];
+                        snprintf(nbuf, sizeof(nbuf), "云端:%s", on ? "开" : "关");
+                        UI_SubMenuSetItem(UI_NET_CLOUD, nbuf);
+                        snprintf(m, sizeof(m), "云端已%s%s", on ? "开启" : "关闭",
+                                 (on && !(c.pid[0] && c.name[0] && c.key[0])) ? "\n未配三元组(网页填写)" : "");
+                        INS_Show(m);       /* 乱码显示, 任意键返回联网子菜单 */
+                        ui_push(ST_INS);
+                    }
+                }
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_UPDATE)  /* 联网-版本更新(OTA): 需网络, v1.15 自设置移入 */
+                {
+                    if (!ota_drv_configured())
+                    {
+                        UI_FullScreen("版本更新", "未配置OTA地址");
+                        ota_info_active = 0;
+                        ui_push(ST_INFO);
+                    }
+                    else if (ota_drv_busy())
+                    {
+                        UI_FullScreen("版本更新", "升级正在进行...");
+                        ota_info_active = 1;
+                        ui_push(ST_INFO);
+                    }
+                    else
+                    {
+                        esp_err_t ota_err = ota_drv_start();
+                        UI_FullScreen("版本更新",
+                                      (ota_err == ESP_OK) ? "开始检查更新..." : "启动升级失败");
+                        ota_info_active = (ota_err == ESP_OK);
+                        ui_push(ST_INFO);
+                    }
+                }
                 else if (cfg->fn == UI_FN_SETTING)   /* 设置-各项: 循环/切换(组件处理) */
                 {
                     if (sel == SET_IDX_INFO)   /* 系统信息(可上下翻页: 系统/签收/战绩) */
@@ -501,29 +544,7 @@ static void on_event(uint8_t evt)
                         INS_Show("确认初始化?\n再按OK清除全部并重启");
                         ui_push(ST_INFO);
                     }
-                    else if (sel == SET_IDX_UPDATE)   /* 版本更新(OTA) */
-                    {
-                        if (!ota_drv_configured())
-                        {
-                            UI_FullScreen("版本更新", "未配置OTA地址");
-                            ota_info_active = 0;
-                            ui_push(ST_INFO);
-                        }
-                        else if (ota_drv_busy())
-                        {
-                            UI_FullScreen("版本更新", "升级正在进行...");
-                            ota_info_active = 1;
-                            ui_push(ST_INFO);
-                        }
-                        else
-                        {
-                            esp_err_t ota_err = ota_drv_start();
-                            UI_FullScreen("版本更新",
-                                          (ota_err == ESP_OK) ? "开始检查更新..." : "启动升级失败");
-                            ota_info_active = (ota_err == ESP_OK);
-                            ui_push(ST_INFO);
-                        }
-                    }
+                    /* 版本更新(OTA) 自 v1.15 移至 联网->版本更新 */
                     else
                     {
                         SET_SubmenuSelect(sel);

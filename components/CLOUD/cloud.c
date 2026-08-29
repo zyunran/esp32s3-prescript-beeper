@@ -71,6 +71,7 @@ void CLOUD_GetConfig(cloud_cfg_t *out)
 
 uint8_t CLOUD_IsOnline(void)  { return s_online; }
 uint8_t CLOUD_KeepAlive(void) { return s_on_shadow && s_started; }
+uint8_t CLOUD_GetOn(void)     { return s_on_shadow; }
 
 uint8_t CLOUD_TakeCmd(char *buf, size_t n)
 {
