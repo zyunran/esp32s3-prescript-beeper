@@ -145,7 +145,7 @@ With WiFi connected, open the config page → "☁ Cloud OneNET" card: enter the
 |--------|------|
 | LCD ST7789 284×76 (SPI2 60MHz) | SCL=`7` SDA=`8` CS=`9` RST=`10` DC=`11` BLK=`12` (active-low backlight) |
 | Keys Up / Down / OK (internal pull-ups, active-low; PCB rev.: Up=`5` Down=`6` OK=`4`) | see left |
-| Active buzzer (active-low) | `15` |
+| Active buzzer module (high-level trigger: high = beep, low = silent) | `15` |
 | MAX98357A amp (I2S) | BCLK=`16` LRC=`17` DIN=`18` SD=`13` (low = muted) |
 | DS1302 RTC (3-wire bit-bang) | CLK=`2` DAT=`14` CE/RST=`21` |
 | MPU6050 IMU (software I2C) | SCL=`39` SDA=`38` |

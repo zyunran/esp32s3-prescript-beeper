@@ -1123,7 +1123,7 @@ void app_main(void)
     UI_UserInit();   /* 加载使用者列表(网页可添加, NVS持久化), 须在 UI_Init 前 */
     UI_Init();
     lcd_sleep_hold();   /* 浅睡眠保持 CS/RST/DC 输出高, 防唤醒白屏 */
-    BUZZER_Init();   /* 有源蜂鸣器 GPIO15(低电平有效), 须在任何 Beep 前 */
+    BUZZER_Init();   /* 有源蜂鸣器 GPIO15(高电平有效), 须在任何 Beep 前 */
     INS_Init();
     UI_SetUserTitle(INS_UserName());   /* 主菜单「使用者」标题 = 当前使用者(如李箱) */
     UI_RenderScreen();                 /* 重绘让标题立即生效 */

@@ -19,17 +19,17 @@ void BUZZER_Init(void)
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = 1ULL << GPIO_NUM_15,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_ENABLE,   /* 上拉: 引脚空闲高=静, 防上电一直响 */
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,/* 下拉: 引脚空闲低=静, 防上电一直响(高电平触发) */
+        .pull_up_en = GPIO_PULLUP_DISABLE,
     };
     gpio_config(&io);
-    gpio_set_level(GPIO_NUM_15, 1);        /* 初始高=静(低电平有效) */
+    gpio_set_level(GPIO_NUM_15, 0);        /* 初始低=静(高电平有效) */
     /* 最大驱动能力, 提高蜂鸣器音量 */
     gpio_set_drive_capability(GPIO_NUM_15, GPIO_DRIVE_CAP_3);
 }
 
-static void bz_gpio_on(void)  { gpio_set_level(GPIO_NUM_15, 0); }  /* 低=响 */
-static void bz_gpio_off(void) { gpio_set_level(GPIO_NUM_15, 1); }  /* 高=静 */
+static void bz_gpio_on(void)  { gpio_set_level(GPIO_NUM_15, 1); }  /* 高=响 */
+static void bz_gpio_off(void) { gpio_set_level(GPIO_NUM_15, 0); }  /* 低=静 */
 
 void BUZZER_Beep(uint8_t times)
 {
