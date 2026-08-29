@@ -973,9 +973,9 @@ static void ui_task(void *arg)
                     }
                 }
             }
-            if (ui_state == ST_MAIN || ui_state == ST_SUB)   /* 子菜单与主菜单同布局: 左侧时间/天气/图标同步刷新 */
+            if (ui_state == ST_MAIN)
             {
-                if (ui_state == ST_MAIN && LOOM_TimeOn())
+                if (LOOM_TimeOn())
                 {
                     /* 彩蛋「纺织时间」(LOOM 组件): 现实1秒=显示1小时, 显示节流 ~5次/秒防刷屏打满 */
                     char d[8], t[12], w[8];

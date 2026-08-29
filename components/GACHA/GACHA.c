@@ -1174,11 +1174,11 @@ static void gacha_result_tick(void)
 
 
 /* ================= 子界面菜单(十连/拼点/单抽/积分/图鉴/退出) ================= */
-static const char *gacha_menu_items[GACHA_MENU_CNT] = { "十连", "拼点", "单抽", "积分", "图鉴", "退出" };
-#define GC_MENU_COIN   1              /* "拼点"项索引 */
-#define GC_MENU_PULL   2              /* "积分抽"项索引 */
-#define GC_MENU_SCORE  3              /* "积分"项索引 */
-#define GC_MENU_CODEX  4              /* "图鉴"项索引 */
+static const char *gacha_menu_items[GACHA_MENU_CNT] = { "十连", "单抽", "拼点", "图鉴", "积分", "退出" };
+#define GC_MENU_COIN   2              /* "拼点"项索引 */
+#define GC_MENU_PULL   1              /* "积分抽"项索引 */
+#define GC_MENU_SCORE  4              /* "积分"项索引 */
+#define GC_MENU_CODEX  3              /* "图鉴"项索引 */
 #define GC_MENU_EXIT   5              /* "退出"项索引 */
 
 /* 积分抽: 10当前积分直接抽一张★3, 扣当前积分并标记已抽; 走普通出金的语音打字机 */

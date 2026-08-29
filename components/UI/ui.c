@@ -85,8 +85,8 @@ static const char *cfg_net_items[] = {
     [UI_NET_EXIT]    = "退出",
 };
 static const char *cfg_ttl_items[] = {
-    [UI_TTL_FUTURE] = "计时",
     [UI_TTL_PAST]   = "闹钟",
+    [UI_TTL_FUTURE] = "计时",
     [UI_TTL_POMO]   = "番茄钟",   /* v1.03: 番茄钟(POMODORO 组件) */
     [UI_TTL_EXIT]   = "退出",
 };

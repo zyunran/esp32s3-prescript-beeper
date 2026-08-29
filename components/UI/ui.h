@@ -78,16 +78,16 @@ typedef enum {
 typedef enum {
     UI_NET_CONNECT = 0,   /* 联网开关(开启/关闭联网会话) */
     UI_NET_CLOUD,         /* 连接云端(OneNET 远程在线 开/关) */
-    UI_NET_AP,            /* 开启配网 */
-    UI_NET_WEATHER,       /* 查看天气 */
+    UI_NET_WEATHER,       /* 查看天气(最高频查看项, 前置) */
     UI_NET_IP,            /* 显示IP */
+    UI_NET_AP,            /* 配网(低频, 后置; 动态"配网:开/关") */
     UI_NET_UPDATE,        /* 版本更新(OTA, 需网络故归入联网) */
     UI_NET_EXIT,          /* 退出 */
 } ui_net_idx_t;
 
 typedef enum {
-    UI_TTL_FUTURE = 0,    /* 跨越时间(倒计时) */
-    UI_TTL_PAST,          /* 锚定时间(闹钟) */
+    UI_TTL_PAST = 0,      /* 锚定时间(闹钟: 最高频, 置顶) */
+    UI_TTL_FUTURE,        /* 跨越时间(倒计时) */
     UI_TTL_POMO,          /* 番茄钟(v1.03 新增) */
     UI_TTL_EXIT,          /* 退出 */
 } ui_ttl_idx_t;
