@@ -434,12 +434,9 @@ static void on_event(uint8_t evt)
                         ui_push(ST_INS);                    /* 任意键可先退回; 结果会自动换在这屏 */
                     }
                 }
-                else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-配网: 开/关配网热点 */
+                else if (cfg->fn == UI_FN_NET && sel == UI_NET_AP)  /* 联网-配网: 开/关配网热点(返回子菜单时标签按 NET_ApOn 重刷) */
                 {
                     uint8_t on = NET_ApToggle();
-                    char abuf[16];
-                    snprintf(abuf, sizeof(abuf), "配网:%s", on ? "开" : "关");
-                    UI_SubMenuSetItem(UI_NET_AP, abuf);   /* 标签就地刷新 */
                     if (on)
                     {
                         char m[68];   /* "热点已开 <SSID>/<8位随机密码>": SSID≤32B+密码8B+中文前后缀, 留足余量 */
@@ -499,21 +496,15 @@ static void on_event(uint8_t evt)
                 }
                 else if (cfg->fn == UI_FN_NET && sel == UI_NET_CLOUD)  /* 联网-连接云端: 开/关 OneNET 远程在线 */
                 {
+                    uint8_t on = CLOUD_GetOn() ? 0 : 1;
                     cloud_cfg_t c;
-                    uint8_t on;
+                    char m[64];
+                    CLOUD_SetOn(on);   /* 仅翻转开关(与网页保存同锁), 云任务自动重连/收掉会话 */
                     CLOUD_GetConfig(&c);
-                    on = c.on ? 0 : 1;
-                    c.on = on;
-                    CLOUD_SetConfig(&c);   /* 存 NVS + 云任务按新开关 自动重连/收掉会话 */
-                    {
-                        char nbuf[16], m[64];
-                        snprintf(nbuf, sizeof(nbuf), "云端:%s", on ? "开" : "关");
-                        UI_SubMenuSetItem(UI_NET_CLOUD, nbuf);
-                        snprintf(m, sizeof(m), "云端已%s%s", on ? "开启" : "关闭",
-                                 (on && !(c.pid[0] && c.name[0] && c.key[0])) ? "\n未配三元组(网页填写)" : "");
-                        INS_Show(m);       /* 乱码显示, 任意键返回联网子菜单 */
-                        ui_push(ST_INS);
-                    }
+                    snprintf(m, sizeof(m), "云端已%s%s", on ? "开启" : "关闭",
+                             (on && !(c.pid[0] && c.name[0] && c.key[0])) ? "\n未配三元组(网页填写)" : "");
+                    INS_Show(m);       /* 乱码显示, 任意键返回联网子菜单(标签返回时按 CLOUD_GetOn 重刷) */
+                    ui_push(ST_INS);
                 }
                 else if (cfg->fn == UI_FN_NET && sel == UI_NET_UPDATE)  /* 联网-版本更新(OTA): 需网络, v1.15 自设置移入 */
                 {
@@ -635,10 +626,10 @@ static void on_event(uint8_t evt)
                 ui_pop();
                 break;
             }
-            if (reset_pending)              /* 初始化: 再按OK清NVS重启, 其他键取消 */
+            if (reset_pending)              /* 初始化: 物理OK清NVS重启(左摇的OK不算, 防误擦除), 其他键取消 */
             {
                 reset_pending = 0;
-                if (evt == EVT_OK)
+                if (evt == EVT_OK && !MPU_EvtWasShake())
                 {
                     nvs_flash_erase();
                     esp_restart();
@@ -653,7 +644,7 @@ static void on_event(uint8_t evt)
                 SET_InfoNav(evt);
                 break;
             }
-            if (evt == EVT_OK && INS_Decoding())   /* 乱码信息未完成: 确认=直接显示原文(再按退出) */
+            if (evt == EVT_OK && !MPU_EvtWasShake() && INS_Decoding())   /* 乱码信息未完成: 物理确认=直接显示原文(左摇不算) */
             {
                 INS_FinishNow();
                 break;
@@ -712,9 +703,9 @@ static void on_event(uint8_t evt)
             break;
 
         case ST_INS:
-            if (evt == EVT_OK && INS_Decoding())
+            if (evt == EVT_OK && !MPU_EvtWasShake() && INS_Decoding())
             {
-                INS_FinishNow();     /* 破译中确认: 跳过动画直接显示原文, 再按确认才退出 */
+                INS_FinishNow();     /* 物理确认: 跳过动画直接显示原文(左摇产生的 OK 不算); 显示完后再按键退出 */
                 break;
             }
             INS_Exit();                  /* 已显示完(或非确认键): 任意键返回 */

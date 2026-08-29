@@ -36,6 +36,7 @@ typedef enum {
 void CLOUD_Init(void);                       /* 加载 NVS 配置 + 创建云端任务(未启用不连) */
 void CLOUD_GetConfig(cloud_cfg_t *out);      /* 锁内快照(WEB 读取用) */
 void CLOUD_SetConfig(const cloud_cfg_t *in); /* 保存 NVS + 通知任务按新配置重建会话(WEB 保存用) */
+void CLOUD_SetOn(uint8_t on);                /* 仅翻转「远程在线」(设备端联网子菜单用; 与网页保存同锁, 互不覆盖) */
 uint8_t CLOUD_IsOnline(void);                /* 1=MQTT 已连接 OneNET */
 uint8_t CLOUD_KeepAlive(void);               /* 1=云端会话保持中(ui_task 待机门控: 开启且已拉起客户端) */
 uint8_t CLOUD_GetOn(void);                   /* 「远程在线」开关当前值(联网子菜单标签用) */

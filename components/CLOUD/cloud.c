@@ -146,13 +146,27 @@ static void cfg_save(const cloud_cfg_t *c)
 void CLOUD_SetConfig(const cloud_cfg_t *in)
 {
     if (!in) return;
-    cfg_save(in);            /* NVS 先落盘(不持锁做 IO) */
-    cfg_lock();
+    cfg_lock();              /* 全程持锁: NVS 与内存同源写入, 杜绝与设备端开关(CLOUD_SetOn)的读改写竞态(NVS 写仅数 ms) */
     s_cfg = *in;
+    s_cfg.on = in->on ? 1 : 0;
     s_on_shadow = s_cfg.on;
+    cfg_save(&s_cfg);
     cfg_unlock();
     s_reload = 1;            /* 任务下一轮: 停旧会话按新配置重建 */
     ESP_LOGI(TAG, "config saved: on=%u pid=%s name=%s", s_on_shadow, in->pid, in->name);
+}
+
+void CLOUD_SetOn(uint8_t on)   /* 仅翻转「远程在线」(设备端联网子菜单用): 锁内改, 不触碰三元组 */
+{
+    cfg_lock();
+    if (s_cfg.on != (on ? 1 : 0))
+    {
+        s_cfg.on = on ? 1 : 0;
+        s_on_shadow = s_cfg.on;
+        cfg_save(&s_cfg);
+        s_reload = 1;        /* 任务下一轮: 按新开关 重连/收掉会话 */
+    }
+    cfg_unlock();
 }
 
 /* ================= 会话管理 ================= */
