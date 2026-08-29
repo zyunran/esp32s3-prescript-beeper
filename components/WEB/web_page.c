@@ -44,7 +44,7 @@ const char web_page[] =
 "<h2>④ 闹钟</h2><div class=hint>最多16个; 点下方「+ 添加闹钟」增加, 每行可删; 模式=每天/工作日/周末/一次性/自定义, 到点屏幕显示「今日指令」</div><div id=alarms></div>"
 "<h2>⑤ 声音与系统</h2>"
 "<div class=row><label>蜂鸣器 <input id=beep type=checkbox style='width:auto'></label><label>音量 <input id=vol type=number min=0 max=100></label></div>"
-"<div class=row><label>按键音 <select id=key_sound><option value=0>关</option><option value=1>蜂鸣</option><option value=2>音频</option><option value=3>双</option></select></label><label>主题 <select id=theme><option value=0>柔和绿</option><option value=1>赛博青</option><option value=2>深夜黑</option></select></label></div>"
+"<div class=row><label>按键音 <select id=key_sound><option value=0>关</option><option value=1>音频</option></select></label><label>主题 <select id=theme><option value=0>柔和绿</option><option value=1>赛博青</option><option value=2>深夜黑</option></select></label></div>"
 "<div class=row><label>熄屏 <select id=timeout><option value=30>30秒</option><option value=60>1分</option><option value=300>5分</option><option value=0>永不</option></select></label>"
 "<label>神谕 <select id=on><option value=0>关</option><option value=1>1条</option><option value=3>3条</option><option value=5>5条</option><option value=9>9条</option></select></label>"
 "<label>时段 <select id=ow><option value=0>白天</option><option value=1>全天</option><option value=2>晚上</option><option value=3>凌晨</option></select></label></div>"

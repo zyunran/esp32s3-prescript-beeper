@@ -12,6 +12,9 @@ static volatile uint8_t  bz_sounding;   /* 正在响 */
 static volatile uint32_t bz_stop;       /* 本次蜂鸣结束时刻 */
 static volatile uint32_t bz_next;       /* 下次蜂鸣开始时刻 */
 static volatile uint8_t  bz_enabled = 1;/* 蜂鸣总开关(设置可调) */
+static volatile uint16_t bz_on_ms  = BZ_BEEP_MS;   /* 每声时长(排程时确定) */
+static volatile uint16_t bz_gap_ms = BZ_BEEP_MIN;  /* 声间间隔(急促连响的固定值) */
+static volatile uint8_t  bz_fixed;                  /* 1=固定间隔(急促连响) 0=随机间隔(普通) */
 
 void BUZZER_Init(void)
 {
@@ -39,7 +42,29 @@ void BUZZER_Beep(uint8_t times)
         bz_sounding = 0;
     }
     bz_remain = times;
+    bz_on_ms  = BZ_BEEP_MS;
+    bz_fixed  = 0;              /* 普通蜂鸣: 随机间隔 */
     bz_next = bz_now_ms() + 30; /* 立即开始 */
+}
+
+/* 急促连响: 固定短间隔, 立即开始(总时长 = times*on + (times-1)*off, 供调用方对齐完成时刻) */
+void BUZZER_RapidBeep(uint8_t times, uint16_t on_ms, uint16_t off_ms)
+{
+    if (bz_sounding)
+    {
+        bz_gpio_off();          /* 正在响: 先断 GPIO 再重新调度, 防卡响 */
+        bz_sounding = 0;
+    }
+    if (times == 0 || on_ms == 0)
+    {
+        bz_remain = 0;
+        return;
+    }
+    bz_remain = times;
+    bz_on_ms  = on_ms;
+    bz_gap_ms = off_ms;
+    bz_fixed  = 1;
+    bz_next   = bz_now_ms();    /* 无延迟立即开始, 便于精确对齐 */
 }
 
 void BUZZER_SetEnable(uint8_t on)
@@ -70,14 +95,21 @@ void BUZZER_Tick(void)
     {
         bz_gpio_on();
         bz_sounding = 1;
-        bz_stop = now + BZ_BEEP_MS;
+        bz_stop = now + bz_on_ms;
         bz_remain--;
     }
     else if (bz_sounding && now >= bz_stop)
     {
         bz_gpio_off();
         bz_sounding = 0;
-        bz_next = now + BZ_BEEP_MIN +
-                  esp_random() % (BZ_BEEP_MAX - BZ_BEEP_MIN);
+        if (bz_fixed)
+        {
+            bz_next = now + bz_gap_ms;   /* 急促连响: 固定短间隔 */
+        }
+        else
+        {
+            bz_next = now + BZ_BEEP_MIN +
+                      esp_random() % (BZ_BEEP_MAX - BZ_BEEP_MIN);
+        }
     }
 }

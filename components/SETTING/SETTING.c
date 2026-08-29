@@ -24,7 +24,7 @@ static const char *TAG = "SET";
 static uint16_t set_timeout_sec = 60;
 static uint8_t  set_vol = 100;
 static uint8_t  set_beep = 1;               /* 蜂鸣器总开关(有源) */
-static uint8_t  set_key_sound = 2;          /* 按键音: 0=关 1=蜂鸣 2=音频 3=双 */
+static uint8_t  set_key_sound = 1;          /* 按键音: 0=关 1=音频(扬声器) */
 static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
 static uint8_t  set_oracle_n = 3;
 static uint8_t  set_oracle_win = 0;
@@ -55,7 +55,7 @@ static const char *set_oracle_win_name[] = { "白天", "全天", "晚上", "凌�
 static const char *set_cursor_name[] = { "白线", "白块", "角框" };
 static const char *set_theme_name[] = { "柔和绿", "赛博青", "深夜黑" };
 #define SET_THEME_N (sizeof(set_theme_name) / sizeof(set_theme_name[0]))
-static const char *set_key_sound_name[] = { "关", "蜂鸣", "音频", "双" };
+static const char *set_key_sound_name[] = { "关", "音频" };
 #define SET_KEY_SOUND_N (sizeof(set_key_sound_name) / sizeof(set_key_sound_name[0]))
 
 static char settings_buf[SET_IDX_COUNT][24];   /* 24B: "接收指令 白天" 等长项不被截断 */
@@ -121,7 +121,7 @@ void SET_Init(void)
     if (set_vol > 100) set_vol = 100;
     set_beep = set_beep ? 1 : 0;
     set_shake = set_shake ? 1 : 0;
-    if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 2;
+    if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 1;   /* 旧存储(蜂鸣/双)归入音频 */
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
     if (set_theme >= SET_THEME_N) set_theme = 0;
     /* 不再在此处调用 UI_SetThemePreset(): 它会把 NVS "cfg" 里的自定义颜色覆盖成主题预设色。
@@ -168,12 +168,12 @@ void SET_SetBeep(uint8_t on)
     settings_save();
 }
 
-/* 按键音: 0=关 1=蜂鸣 2=音频 3=双 */
+/* 按键音: 0=关 1=音频(扬声器) */
 uint8_t SET_KeySound(void) { return set_key_sound; }
 
 void SET_SetKeySound(uint8_t v)
 {
-    if (v >= SET_KEY_SOUND_N) v = 2;
+    if (v >= SET_KEY_SOUND_N) v = 1;   /* 旧存储(蜂鸣/双)归入音频 */
     set_key_sound = v;
     settings_save();
 }
@@ -329,7 +329,7 @@ void SET_SubmenuSelect(uint8_t sel)
                  "蜂鸣 %s", set_beep ? "开" : "关");
         UI_SubMenuSetItem(SET_IDX_BEEP, settings_buf[SET_IDX_BEEP]);
     }
-    else if (sel == SET_IDX_KEY)   /* 按键音: 关/蜂鸣/音频/双 循环 */
+    else if (sel == SET_IDX_KEY)   /* 按键音: 关/音频 循环 */
     {
         SET_SetKeySound((uint8_t)((set_key_sound + 1) % SET_KEY_SOUND_N));
         snprintf(settings_buf[SET_IDX_KEY], sizeof(settings_buf[0]),

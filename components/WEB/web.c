@@ -605,7 +605,7 @@ static int web_apply_key_sound(cJSON *root)
 {
     cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
     if (!ks) return 1;
-    if (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3) return 0;
+    if (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 1) return 0;
     SET_SetKeySound((uint8_t)ks->valueint);
     return 1;
 }
@@ -851,7 +851,7 @@ static int web_cfg_validate(cJSON *root)
         if (fnt && (!cJSON_IsNumber(fnt) || fnt->valueint < 0 || fnt->valueint > 3)) return 0;
     }
     cJSON *ks = cJSON_GetObjectItem(root, "key_sound");
-    if (ks && (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 3)) return 0;
+    if (ks && (!cJSON_IsNumber(ks) || ks->valueint < 0 || ks->valueint > 1)) return 0;
     cJSON *ins64 = cJSON_GetObjectItem(root, "ins64");
     if (ins64 && (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring))) return 0;
     cJSON *theme = cJSON_GetObjectItem(root, "theme");

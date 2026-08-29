@@ -2,7 +2,7 @@
  *  - 全屏显示一条指令文本: 先全乱码再逐字"破译"成真字
  *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {RAND:min-max} 随机数 / {TIMER} 内联计时占位
  *  - 乱码全取 ASCII 且字符数≠真字; 已解码字带滑入位移, 小概率回退乱码
- *  - 解码期间不蜂鸣(语音进行音由扬声器播), 完成时蜂鸣器(GPIO15)响 1~2 下
+ *  - 解码期间不蜂鸣(语音进行音由扬声器播); 仅神喻破译在结尾排程三连急促哔, 响完恰破译完
  * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit/UI_RenderScreen)。
  */
 #include "INSTRUCTION.h"
@@ -159,6 +159,13 @@ static uint8_t  ins_reveal_idx;               /* 已破译字数 */
 static int8_t   ins_xoff;                     /* 全乱码阶段整块左右偏移 */
 static uint32_t ins_scr_last;                 /* 上次乱码帧刷新时刻 ms */
 static uint32_t ins_reveal_last;              /* 上次逐字揭示时刻 ms */
+
+/* 结尾三连急促蜂鸣(仅神喻破译): 揭示每字间隔固定, 完成时刻可预知,
+ * 排程三连响使其恰在"最后一字揭示完成"瞬间收尾(响完即破译完) */
+static uint8_t  ins_beep_next;                /* 下一次 Show 带结尾蜂鸣(神喻入口置 1, INS_Show 消费) */
+static uint8_t  ins_beep_armed;               /* 本次破译带结尾蜂鸣 */
+static uint8_t  ins_beep_fired;               /* 结尾蜂鸣已排程 */
+static uint32_t ins_beep_deadline;            /* 破译完成时刻 ms(揭示阶段起始时算出) */
 
 static uint32_t ins_now_ms(void)
 {
@@ -470,6 +477,8 @@ static void ins_scr_step(void)
                 ins_scr_last = now;
                 ins_reveal_last = now;
                 ins_xoff = 0;
+                /* 揭示间隔固定 -> 完成时刻可预知: 供结尾三连响对齐 */
+                ins_beep_deadline = now + (uint32_t)ins_gl_total * INS_REVEAL_DELAY_MS;
             }
         }
     }
@@ -496,6 +505,14 @@ static void ins_scr_step(void)
                 }
             }
             ins_scr_render();
+        }
+
+        /* 结尾三连急促响(仅神喻): 剩余时间够放完三连响时排程, 响完恰好破译完成 */
+        if (ins_beep_armed && !ins_beep_fired &&
+            (int32_t)(ins_beep_deadline - now) <= (int32_t)BZ_RAPID_TOTAL(3))
+        {
+            ins_beep_fired = 1;
+            BUZZER_RapidBeep(3, BZ_RAPID_ON, BZ_RAPID_OFF);
         }
 
         /* 逐字揭示(80ms 一字) */
@@ -531,8 +548,7 @@ static void ins_scr_step(void)
                     }
                 }
                 ins_scr_render();
-                SOUND_Stop();                              /* 停进行音 */
-                BUZZER_Beep(3);                            /* 破译完成: 蜂鸣器三声哔哔 */
+                SOUND_Stop();                              /* 停进行音(结尾三连响已在完成前排程, 此处不再响) */
             }
         }
     }
@@ -909,8 +925,14 @@ void INS_Show(const char *text)
     ins_reveal_last = ins_now_ms();
     ins_scr_on = 1;
 
-    /* 解码期间不蜂鸣(语音进行音已由扬声器播, 避免重复); 仅完成时响 1~2 下.
-     * 起解码先急停蜂鸣(断 GPIO + 作废待响排程), 防蜂鸣器卡在低电平持续响 */
+    /* 结尾蜂鸣只跟一次 Show: 神喻入口置 ins_beep_next, 其余破译(指令/系统信息等)静音 */
+    ins_beep_armed = ins_beep_next;
+    ins_beep_next = 0;
+    ins_beep_fired = 0;
+
+    /* 起解码先急停蜂鸣(断 GPIO + 作废待响排程), 防蜂鸣器卡在低电平持续响;
+     * 结尾三连响由揭示阶段排程(仅神喻), 与破译完成时刻对齐 */
+    BUZZER_Stop();
 
     SOUND_PlayLoop(snd_progress, snd_progress_frames);   /* 乱码翻译进行音循环播放 */
 
@@ -1015,6 +1037,13 @@ void INS_ShowRandom(void)
     ins_unlock();
 }
 
+/* 神喻破译(每日签/神谕定时推送专用): 随机指令 + 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
+void INS_ShowOracle(void)
+{
+    ins_beep_next = 1;
+    INS_ShowRandom();
+}
+
 void INS_Tick(void)
 {
     if (!ins_scr_on)
@@ -1051,7 +1080,10 @@ void INS_FinishNow(void)
     ins_scr_phase = 2;
     ins_scr_render();
     SOUND_Stop();                              /* 停进行音 */
-    BUZZER_Beep(3);                            /* 与自然破译完成一致: 三声哔 */
+    if (ins_beep_armed)                        /* 跳过即完成: 三连响就地奏响(仅神喻) */
+    {
+        BUZZER_RapidBeep(3, BZ_RAPID_ON, BZ_RAPID_OFF);
+    }
 }
 
 void INS_Exit(void)

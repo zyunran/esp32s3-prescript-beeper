@@ -27,6 +27,7 @@ void INS_Show(const char *text);        /* 显示一条自定义指令(乱码→
 void INS_ShowIns(const char *text);     /* 指令显示: 已有"致X:"原样; 无则自动加"致{当前使用者}:" */
 void INS_ShowByIndex(uint8_t idx);      /* 显示预设指令(对应菜单项索引) */
 void INS_ShowRandom(void);              /* 随机抽取一条预设指令并破译显示 */
+void INS_ShowOracle(void);              /* 神喻(每日签/定时推送): 随机指令 + 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
 void INS_ShowGenerated(void);           /* 用模板现场生成随机指令(含当前使用者) */
 /* 当前使用者名称(神谕指令"致X:"对象; 默认李箱, 存 NVS "ins2"/"user") */
 const char *INS_UserName(void); /* 返回锁内快照(非 ins_user 本体), 请立即使用, 下次调用会复用该快照缓冲 */

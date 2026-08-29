@@ -318,7 +318,7 @@ static void play_key_sound(uint8_t evt)
     uint8_t mode = SET_KeySound();
     const int16_t *pcm = NULL;
     uint32_t frames = 0;
-    if (mode == 0) return;
+    if (mode == 0) return;   /* 关 */
     if (evt == EVT_UP || evt == EVT_DOWN)
     {
         pcm = snd_key_up;
@@ -334,8 +334,7 @@ static void play_key_sound(uint8_t evt)
         pcm = snd_key_back;
         frames = snd_key_back_frames;
     }
-    if (mode == 1 || mode == 3) BUZZER_Beep(1);
-    if ((mode == 2 || mode == 3) && pcm) SOUND_Play(pcm, frames);
+    if (pcm) SOUND_Play(pcm, frames);   /* 音频(扬声器) */
 }
 
 static void on_event(uint8_t evt)
@@ -826,7 +825,7 @@ static void ui_task(void *arg)
                     daily_last[sizeof(daily_last) - 1] = '\0';
                     ORACLE_DsignInc();   /* 每日签计数(已收拢至 ORACLE 组件) */
                     CLOUD_NotifyEvent(CLOUD_EVT_DAILY, NULL);   /* 云端事件: 每日神谕已推送 */
-                    INS_ShowRandom();
+                    INS_ShowOracle();   /* 神喻破译: 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
                     ui_push(ST_INS);
                     PWR_Wake(now);
                 }
@@ -862,7 +861,7 @@ static void ui_task(void *arg)
                 ORACLE_Delivered();
                 if (ui_state == ST_MAIN)
                 {
-                    INS_ShowRandom();
+                    INS_ShowOracle();   /* 神谕定时推送: 结尾三连急促蜂鸣(唯一带蜂鸣的破译) */
                     ui_push(ST_INS);
                     PWR_Wake(now);
                 }
