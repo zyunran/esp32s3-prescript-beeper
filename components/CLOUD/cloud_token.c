@@ -1,7 +1,10 @@
 /* OneNET 安全鉴权 token 生成(HMAC-SHA256), 设备级(password 字段)
- * 规则: token = version=2018-10-31&res={URL编码}&et={过期秒}&method=sha256&sign={URL编码}
- *   res   = products/{pid}/devices/{name}
- *   sign  = base64(HMAC-SHA256(base64decode(key), res + "\n" + et))
+ * 规则(新版 DMP 平台, 文档 1486《Token算法》2026-01 更新):
+ *   token = version=2018-10-31&res={URL编码}&et={过期秒}&method=sha256&sign={URL编码}
+ *     res  = products/{pid}/devices/{name}
+ *     签名明文按参数名字符序仅取 value, '\n' 分隔:
+ *     StringForSignature = et + "\n" + method + "\n" + res + "\n" + version
+ *     sign = base64(HMAC-SHA256(base64decode(key), StringForSignature))
  * 与 tools/onenet_token.py 同一套规则(真机联调前可先脚本+MQTTX 验证三元组);
  * 平台相关逻辑与 cloud_onenet.c 同属适配层 */
 #include <stdio.h>
@@ -41,7 +44,7 @@ static int url_encode(const char *in, char *out, size_t n)
 int cloud_token_gen(const char *pid, const char *name, const char *key_b64,
                     char *out, size_t outn)
 {
-    char res[112], plain[140], enc_res[340], enc_sign[160];
+    char res[112], plain[192], enc_res[340], enc_sign[160];
     unsigned char key[64], mac[32], sign_b64[48];
     size_t key_len = 0, mac_len = 0;
 
@@ -61,7 +64,8 @@ int cloud_token_gen(const char *pid, const char *name, const char *key_b64,
                                 ? (unsigned long long)now + 365ULL * 86400ULL
                                 : 1893456000ULL;
 
-    n = snprintf(plain, sizeof(plain), "%s\n%llu", res, et);
+    /* 新版 DMP 平台签名明文: 按参数名字符序仅取 value, '\n' 分隔(文档 1486《Token算法》) */
+    n = snprintf(plain, sizeof(plain), "%llu\nsha256\n%s\n2018-10-31", et, res);
     if (n < 0 || n >= (int)sizeof(plain)) return -1;
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (!md || mbedtls_md_hmac(md, key, key_len,

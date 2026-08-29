@@ -12,9 +12,11 @@
   username = ProductID
   password = <本脚本输出的 token>
 
-规则依据 OneNET 安全鉴权文档:
-  sign 明文 = res + "\\n" + et;  key = base64 解码后的 AccessKey;
-  sign = base64(HMAC-SHA256(key, 明文)), 拼接时 res 与 sign 需 URL 编码.
+规则依据 OneNET 新版 DMP 平台安全鉴权文档(1486《Token算法》, 2026-01 更新):
+  签名明文按参数名字符序仅取 value, '\\n' 分隔:
+    StringForSignature = et + "\\n" + method + "\\n" + res + "\\n" + version
+  key = base64 解码后的 AccessKey;
+  sign = base64(HMAC-SHA256(key, StringForSignature)), 拼接时 res 与 sign 需 URL 编码.
 """
 import base64
 import hashlib
@@ -29,7 +31,8 @@ def gen_token(pid, name, key_b64, days=365):
     res = "products/{}/devices/{}".format(pid, name)
     et = str(int(time.time()) + days * 86400)
     method = "sha256"
-    plaintext = (res + "\n" + et).encode("utf-8")
+    # 新版 DMP 平台: 签名明文 = et\nmethod\nres\nversion(按参数名字符序, 仅取 value)
+    plaintext = "{}\n{}\n{}\n{}".format(et, method, res, version).encode("utf-8")
     key = base64.b64decode(key_b64)
     sign_b64 = base64.b64encode(hmac.new(key, plaintext, hashlib.sha256).digest()).decode()
     return ("version={}&res={}&et={}&method={}&sign={}"
