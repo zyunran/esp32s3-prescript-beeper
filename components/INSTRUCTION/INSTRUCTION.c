@@ -160,12 +160,11 @@ static int8_t   ins_xoff;                     /* 全乱码阶段整块左右偏�
 static uint32_t ins_scr_last;                 /* 上次乱码帧刷新时刻 ms */
 static uint32_t ins_reveal_last;              /* 上次逐字揭示时刻 ms */
 
-/* 结尾三连急促蜂鸣: 揭示每字间隔固定, 完成时刻可预知,
- * 排程三连响使其恰在"最后一字揭示完成"瞬间收尾(响完即破译完) */
+/* 结尾三连急促蜂鸣: 按剩余未揭示字数推算完成时刻, 排程三连响恰在最后一字揭示完收尾
+ * (不按起始时刻推算墙钟: 主循环节拍抖动逐字累积, 文本越长偏得越多, 会响在破译中段) */
 static uint8_t  ins_beep_next;                /* 下一次 Show 带结尾蜂鸣(带蜂鸣入口经 INS_BeepNext 置 1, INS_Show 消费) */
 static uint8_t  ins_beep_armed;               /* 本次破译带结尾蜂鸣 */
 static uint8_t  ins_beep_fired;               /* 结尾蜂鸣已排程 */
-static uint32_t ins_beep_deadline;            /* 破译完成时刻 ms(揭示阶段起始时算出) */
 
 static uint32_t ins_now_ms(void)
 {
@@ -477,8 +476,6 @@ static void ins_scr_step(void)
                 ins_scr_last = now;
                 ins_reveal_last = now;
                 ins_xoff = 0;
-                /* 揭示间隔固定 -> 完成时刻可预知: 供结尾三连响对齐 */
-                ins_beep_deadline = now + (uint32_t)ins_gl_total * INS_REVEAL_DELAY_MS;
             }
         }
     }
@@ -507,9 +504,10 @@ static void ins_scr_step(void)
             ins_scr_render();
         }
 
-        /* 结尾三连急促响(仅神喻): 剩余时间够放完三连响时排程, 响完恰好破译完成 */
+        /* 结尾三连急促响(仅带蜂鸣破译): 剩余字数的时间够放完三连响时排程, 响完恰好破译完成
+         * 按剩余字数而非墙钟推算, 文本多长都不受轮询抖动累积影响 */
         if (ins_beep_armed && !ins_beep_fired &&
-            (int32_t)(ins_beep_deadline - now) <= (int32_t)BZ_RAPID_TOTAL(3))
+            (uint32_t)(ins_gl_total - ins_reveal_idx) * INS_REVEAL_DELAY_MS <= BZ_RAPID_TOTAL(3))
         {
             ins_beep_fired = 1;
             BUZZER_RapidBeep(3, BZ_RAPID_ON, BZ_RAPID_OFF);
