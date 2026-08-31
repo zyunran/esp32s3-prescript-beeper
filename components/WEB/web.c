@@ -614,7 +614,7 @@ static int web_apply_theme(cJSON *root)
 {
     cJSON *theme = cJSON_GetObjectItem(root, "theme");
     if (!theme) return 1;
-    if (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= 3) return 0;
+    if (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= THEME_PRESET_N) return 0;
     /* 只有用户真的切换主题预设时才应用预设；
      * 否则网页每次保存都会用预设色覆盖刚保存的自定义颜色。 */
     if ((uint8_t)theme->valueint != SET_Theme())
@@ -855,7 +855,7 @@ static int web_cfg_validate(cJSON *root)
     cJSON *ins64 = cJSON_GetObjectItem(root, "ins64");
     if (ins64 && (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring))) return 0;
     cJSON *theme = cJSON_GetObjectItem(root, "theme");
-    if (theme && (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= 3)) return 0;
+    if (theme && (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= THEME_PRESET_N)) return 0;
     cJSON *ota = cJSON_GetObjectItem(root, "ota");
     if (ota)
     {

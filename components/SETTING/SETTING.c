@@ -29,7 +29,7 @@ static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
 static uint8_t  set_oracle_n = 3;
 static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
-static uint8_t  set_theme = 0;              /* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑白 */
+static uint8_t  set_theme = 0;              /* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 3=标准黑白 */
 static uint32_t set_boot_count = 0;         /* 开机次数(NVS "info") */
 static uint8_t  set_save_batch = 0;         /* >0=网页批量保存中: settings_save 延迟到批结束 */
 
@@ -53,7 +53,7 @@ static const char *set_oracle_win_name[] = { "白天", "全天", "晚上", "凌�
 #define SET_ORACLE_WIN_N (sizeof(set_oracle_win_opt) / sizeof(set_oracle_win_opt[0]))
 
 static const char *set_cursor_name[] = { "白线", "白块", "角框" };
-static const char *set_theme_name[] = { "柔和绿", "赛博青", "深夜黑" };
+static const char *set_theme_name[] = { "柔和绿", "赛博青", "深夜黑", "标准黑白" };
 #define SET_THEME_N (sizeof(set_theme_name) / sizeof(set_theme_name[0]))
 static const char *set_key_sound_name[] = { "关", "音频" };
 #define SET_KEY_SOUND_N (sizeof(set_key_sound_name) / sizeof(set_key_sound_name[0]))
@@ -178,7 +178,7 @@ void SET_SetKeySound(uint8_t v)
     settings_save();
 }
 
-/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 */
+/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 3=标准黑白 */
 uint8_t SET_Theme(void) { return set_theme; }
 
 void SET_SetTheme(uint8_t idx)
@@ -377,7 +377,7 @@ void SET_SubmenuSelect(uint8_t sel)
                  "光标 %s", set_cursor_name[set_cursor]);
         UI_SubMenuSetItem(SET_IDX_CURSOR, settings_buf[SET_IDX_CURSOR]);
     }
-    else if (sel == SET_IDX_THEME)   /* 主题预设: 柔和绿/赛博青/深夜黑 循环 */
+    else if (sel == SET_IDX_THEME)   /* 主题预设: 柔和绿/赛博青/深夜黑/标准黑白 循环 */
     {
         set_theme = (uint8_t)((set_theme + 1) % SET_THEME_N);
         UI_SetThemePreset(set_theme);

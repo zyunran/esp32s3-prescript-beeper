@@ -45,7 +45,7 @@
 
 
 /* ================= 主题预设(设置里一键切换) ================= */
-#define THEME_PRESET_N   3
+#define THEME_PRESET_N   4
 /* 预设0: 柔和绿(默认) */
 #define THEME0_BG        THEME_BG
 #define THEME0_MENU      THEME_MENU
@@ -68,5 +68,12 @@
 #define THEME2_ICON      0x8C71   /* 中灰图标 */
 #define THEME2_TIME      0xC618   /* 浅灰时钟 */
 #define THEME2_DATE      0xC618   /* 浅灰日期 */
+/* 预设3: 标准黑白(纯黑底/纯白字, 高对比) */
+#define THEME3_BG        BLACK
+#define THEME3_MENU      WHITE
+#define THEME3_FRAME     WHITE
+#define THEME3_ICON      WHITE
+#define THEME3_TIME      WHITE
+#define THEME3_DATE      WHITE
 
 #endif

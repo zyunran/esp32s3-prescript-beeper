@@ -1211,11 +1211,12 @@ uint8_t UI_GetCursorStyle(void)
     return ui_cursor_style;
 }
 
-/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑白; 写入 NVS "cfg"(与网页主题色同源) */
+/* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 3=标准黑白; 写入 NVS "cfg"(与网页主题色同源) */
 static const uint16_t ui_theme_presets[THEME_PRESET_N][6] = {
     { THEME0_BG, THEME0_MENU, THEME0_FRAME, THEME0_ICON, THEME0_TIME, THEME0_DATE },
     { THEME1_BG, THEME1_MENU, THEME1_FRAME, THEME1_ICON, THEME1_TIME, THEME1_DATE },
     { THEME2_BG, THEME2_MENU, THEME2_FRAME, THEME2_ICON, THEME2_TIME, THEME2_DATE },
+    { THEME3_BG, THEME3_MENU, THEME3_FRAME, THEME3_ICON, THEME3_TIME, THEME3_DATE },
 };
 
 void UI_SetThemePreset(uint8_t idx)
