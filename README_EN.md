@@ -7,7 +7,6 @@ An ESP32-S3 firmware for a desktop **pager**-shaped personal terminal: 284×76 h
 - Platform: ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C
 - Flash: 16MB (OTA dual partitions: ota_0 / ota_1, 2MB each)
 - Most code started as vibe coding, then was hardened through four systematic audits (80+ fixes); solid engineering and docs throughout
-- Reusable driver library: `D:/STM32Project/Library_SK/my_esp32_lib/esp32oder` (decoupled, with usage docs)
 
 ---
 
