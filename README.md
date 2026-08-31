@@ -7,7 +7,6 @@
 - 平台：ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C
 - 闪存：16MB（OTA 双分区，ota_0/ota_1 各 2MB）
 - 大部分代码基于 vibe coding 起步，经四轮系统性审计持续加固（累计修复 80+ 项），工程化与文档齐全
-- 可复用驱动库：`D:/STM32Project/Library_SK/my_esp32_lib/esp32oder`（独立解耦，含使用说明）
 ---
 
 
