@@ -57,7 +57,7 @@ const char web_page[] =
 "<h2>⑦ 待办(指令日志)</h2><div class=hint>要执行的事; 指令前加 {TODO} 会在设备破译时自动存入</div>"
 "<div class=row><input id=txt type=text placeholder='要执行的事' style='flex:1'><button onclick=todoAdd() style='background:#2a5a8f;color:#fff;padding:8px 16px;border:0;border-radius:6px'>添加</button><button onclick=todoClear() style='background:#5a2a2a;color:#fff;padding:8px 16px;border:0;border-radius:6px'>清空</button></div>"
 "<div id=todolist></div>"
-"<h2>OTA 固件升级</h2><div class=hint>填固件直链(如 GitHub Release 的 oder.bin)与 SHA256；保存后到设备“设置→版本更新”开始升级</div>"
+"<h2>OTA 固件升级</h2><div class=hint>填固件直链(如 GitHub Release 的 oder.bin)与 SHA256；保存后到设备“联网→版本更新”开始升级</div>"
 "<div class=row><label>固件 URL <input id=otaurl type=text style=width:100% placeholder='https://github.com/.../oder.bin'></label></div>"
 "<div class=row><label>SHA256(可留空) <input id=otasha type=text style=width:100% placeholder='64位 hex,留空则跳过校验'></label></div>"
 "<h2>☁ 云端 OneNET(可选)</h2><div class=hint>填 OneNET 三元组并启用: 电量/闹钟/待办提醒/每日神谕上报云端, 平台可下发屏幕指令; 启用期间设备保持在线不进待机(耗电增加)。平台侧物模型请按 README「云端 OneNET」章节创建</div>"
