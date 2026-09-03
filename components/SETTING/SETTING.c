@@ -279,7 +279,7 @@ static void settings_items_refresh(void)
     snprintf(settings_buf[SET_IDX_SHAKE], sizeof(settings_buf[0]),
              "摇动 %s", set_shake ? "开" : "关");
     snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
-             "陀螺仪互换 %s", set_shake_swap ? "开" : "关");
+             "平衡互换 %s", set_shake_swap ? "开" : "关");
     snprintf(settings_buf[SET_IDX_ORACLE_N], sizeof(settings_buf[0]),
              "接收 %d条", set_oracle_n);
     snprintf(settings_buf[SET_IDX_ORACLE_WIN], sizeof(settings_buf[0]),
@@ -368,7 +368,7 @@ void SET_SubmenuSelect(uint8_t sel)
         MPU_SetShakeSwap(set_shake_swap);
         settings_save();
         snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
-                 "陀螺仪互换 %s", set_shake_swap ? "开" : "关");
+                 "平衡互换 %s", set_shake_swap ? "开" : "关");
         UI_SubMenuSetItem(SET_IDX_SHAKE_SWAP, settings_buf[SET_IDX_SHAKE_SWAP]);
     }
     else if (sel == SET_IDX_ORACLE_N)   /* 神谕条数: 循环 */

@@ -71,28 +71,96 @@ void BAT_Init(void)
 /* ADC 读取在 ui_task(每2s)与 httpd 任务(/api/status)都可能调用:
  * esp_adc oneshot 非线程安全; adc_oneshot_read 是阻塞转换读取(轮询硬件完成标志),
  * 故用互斥量(两个调用方都是任务、非 ISR)而非自旋锁, 避免关中断忙等. */
+
+/* 电量精度优化:
+ *  - 多次采样去极值平均: 抑制单次 ADC 毛刺
+ *  - 低通滤波: 防止 WiFi/蜂鸣/亮屏瞬时负载导致百分比跳动
+ *  - 1S 锂电放电曲线分段线性查表: 比 3.0~4.2V 全程线性更接近真实剩余电量 */
+#define BAT_SAMPLE_N      8
+#define BAT_SAMPLE_MIN    4   /* 有效样本达到该值才去掉最大/最小再平均 */
+
+static int32_t bat_last_mv = -1;   /* 低通滤波后的 ADC 侧电压(未乘分压比); 仅在 bat_mux 内访问 */
+
+static int32_t bat_raw_to_mv(int raw)
+{
+    if (bat_cali)
+    {
+        int vout = 0;
+        if (adc_cali_raw_to_voltage(bat_cali, raw, &vout) != ESP_OK) return -1;
+        return vout;
+    }
+    return (int32_t)raw * 3100 / 4096;   /* 线性近似(校准不可用时的兜底) */
+}
+
+/* 1S 锂电电压 -> 百分比(分段线性插值, 比全程直线更符合实际放电曲线) */
+static uint8_t bat_volt_to_pct(int32_t v)
+{
+    static const uint16_t mv_tab[] = {
+        2900, 3200, 3400, 3600, 3700, 3800, 3850, 3900, 3950, 4000, 4100, 4200
+    };
+    static const uint8_t pct_tab[] = {
+        0, 5, 15, 30, 45, 60, 70, 80, 85, 90, 95, 100
+    };
+    uint8_t i;
+    if (v <= mv_tab[0]) return 0;
+    if (v >= mv_tab[sizeof(mv_tab) / sizeof(mv_tab[0]) - 1]) return 100;
+    for (i = 0; i < sizeof(mv_tab) / sizeof(mv_tab[0]) - 1; i++)
+    {
+        if (v < mv_tab[i + 1])
+        {
+            int32_t span = mv_tab[i + 1] - mv_tab[i];
+            int32_t off  = v - mv_tab[i];
+            return (uint8_t)(pct_tab[i] + (uint8_t)(off * (pct_tab[i + 1] - pct_tab[i]) / span));
+        }
+    }
+    return 100;
+}
+
 uint8_t BAT_GetPct(void)
 {
-    int raw = 0;
-    int32_t mv;
+    int32_t mv = -1;
     if (!bat_mux || xSemaphoreTake(bat_mux, portMAX_DELAY) != pdTRUE)
     {
         return 255;                          /* 锁不可用: 保守视为无电池 */
     }
-    if (!bat_adc || adc_oneshot_read(bat_adc, BAT_ADC_CH, &raw) != ESP_OK || raw <= 0)
+
+    if (bat_adc)
     {
-        mv = -1;                             /* 读不到/读零: 视为无电池 */
+        int32_t sum = 0;
+        int  valid = 0;
+        int  mn = 0x7FFFFFFF, mx = -1;
+        uint8_t i;
+        for (i = 0; i < BAT_SAMPLE_N; i++)
+        {
+            int raw = 0;
+            if (adc_oneshot_read(bat_adc, BAT_ADC_CH, &raw) == ESP_OK && raw > 0)
+            {
+                sum += raw;
+                if (raw < mn) mn = raw;
+                if (raw > mx) mx = raw;
+                valid++;
+            }
+        }
+        if (valid >= BAT_SAMPLE_MIN)
+        {
+            sum -= mn;                         /* 去掉最大/最小, 抑制偶然毛刺 */
+            sum -= mx;
+            valid -= 2;
+        }
+        if (valid > 0)
+        {
+            mv = bat_raw_to_mv((int)(sum / valid));
+        }
+
+        if (mv >= 0)
+        {
+            /* 低通滤波: 新值占 1/4, 历史占 3/4, 显示更稳不跳变 */
+            if (bat_last_mv < 0) bat_last_mv = mv;
+            else                 bat_last_mv = (bat_last_mv * 3 + mv) / 4;
+            mv = bat_last_mv;
+        }
     }
-    else if (bat_cali)
-    {
-        int vout = 0;
-        if (adc_cali_raw_to_voltage(bat_cali, raw, &vout) != ESP_OK) mv = -1;
-        else mv = vout;                      /* 校准换算 eFuse 曲线 */
-    }
-    else
-    {
-        mv = (int32_t)raw * 3100 / 4096;     /* 线性近似(校准不可用时的兜底) */
-    }
+
     xSemaphoreGive(bat_mux);
 
     if (mv < 0)
@@ -102,8 +170,6 @@ uint8_t BAT_GetPct(void)
     {
         int32_t v = mv * BAT_DIV;            /* 换算到电池端电压 */
         if (v < BAT_V_NONE) return 255;      /* 未接电池(纯USB) */
-        if (v <= BAT_V_EMPTY) return 0;
-        if (v >= BAT_V_FULL) return 100;
-        return (uint8_t)((v - BAT_V_EMPTY) * 100 / (BAT_V_FULL - BAT_V_EMPTY));
+        return bat_volt_to_pct(v);
     }
 }
