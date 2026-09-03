@@ -26,6 +26,7 @@ static uint8_t  set_vol = 100;
 static uint8_t  set_beep = 1;               /* 蜂鸣器总开关(有源) */
 static uint8_t  set_key_sound = 1;          /* 按键音: 0=关 1=音频(扬声器) */
 static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
+static uint8_t  set_shake_swap = 0;        /* 陀螺仪互换: 1=上下/左右调换 */
 static uint8_t  set_oracle_n = 3;
 static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
@@ -72,6 +73,7 @@ static void settings_save(void)
         nvs_set_u8(h, "bep", set_beep);
         nvs_set_u8(h, "key", set_key_sound);
         nvs_set_u8(h, "shk", set_shake);
+        nvs_set_u8(h, "swp", set_shake_swap);
         nvs_set_u8(h, "on", set_oracle_n);
         nvs_set_u8(h, "ow", set_oracle_win);
         nvs_set_u8(h, "cur", set_cursor);
@@ -101,6 +103,7 @@ void SET_Init(void)
         nvs_get_u8(h, "bep", &set_beep);
         nvs_get_u8(h, "key", &set_key_sound);
         nvs_get_u8(h, "shk", &set_shake);
+        nvs_get_u8(h, "swp", &set_shake_swap);
         nvs_get_u8(h, "on", &set_oracle_n);
         nvs_get_u8(h, "ow", &set_oracle_win);
         nvs_get_u8(h, "cur", &set_cursor);
@@ -121,6 +124,7 @@ void SET_Init(void)
     if (set_vol > 100) set_vol = 100;
     set_beep = set_beep ? 1 : 0;
     set_shake = set_shake ? 1 : 0;
+    set_shake_swap = set_shake_swap ? 1 : 0;
     if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 1;   /* 旧存储(蜂鸣/双)归入音频 */
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
     if (set_theme >= SET_THEME_N) set_theme = 0;
@@ -129,6 +133,7 @@ void SET_Init(void)
     BUZZER_SetEnable(set_beep);
     SOUND_SetVolume(set_vol);
     MPU_SetShake(set_shake);
+    MPU_SetShakeSwap(set_shake_swap);
     UI_SetCursorStyle(set_cursor);
 
     /* 开机次数: 读 +1 再存 */
@@ -194,6 +199,16 @@ void SET_SetShake(uint8_t on)
 {
     set_shake = on ? 1 : 0;
     MPU_SetShake(set_shake);
+    settings_save();
+}
+
+/* 陀螺仪互换: 1=摇动上下互换 + 左右互换 */
+uint8_t SET_ShakeSwap(void) { return set_shake_swap; }
+
+void SET_SetShakeSwap(uint8_t on)
+{
+    set_shake_swap = on ? 1 : 0;
+    MPU_SetShakeSwap(set_shake_swap);
     settings_save();
 }
 
@@ -263,6 +278,8 @@ static void settings_items_refresh(void)
              "按键音 %s", set_key_sound_name[set_key_sound]);
     snprintf(settings_buf[SET_IDX_SHAKE], sizeof(settings_buf[0]),
              "摇动 %s", set_shake ? "开" : "关");
+    snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
+             "陀螺仪互换 %s", set_shake_swap ? "开" : "关");
     snprintf(settings_buf[SET_IDX_ORACLE_N], sizeof(settings_buf[0]),
              "接收 %d条", set_oracle_n);
     snprintf(settings_buf[SET_IDX_ORACLE_WIN], sizeof(settings_buf[0]),
@@ -344,6 +361,15 @@ void SET_SubmenuSelect(uint8_t sel)
         snprintf(settings_buf[SET_IDX_SHAKE], sizeof(settings_buf[0]),
                  "摇动 %s", set_shake ? "开" : "关");
         UI_SubMenuSetItem(SET_IDX_SHAKE, settings_buf[SET_IDX_SHAKE]);
+    }
+    else if (sel == SET_IDX_SHAKE_SWAP)   /* 陀螺仪互换: 上/下 + 左/右 调换 */
+    {
+        set_shake_swap = set_shake_swap ? 0 : 1;
+        MPU_SetShakeSwap(set_shake_swap);
+        settings_save();
+        snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
+                 "陀螺仪互换 %s", set_shake_swap ? "开" : "关");
+        UI_SubMenuSetItem(SET_IDX_SHAKE_SWAP, settings_buf[SET_IDX_SHAKE_SWAP]);
     }
     else if (sel == SET_IDX_ORACLE_N)   /* 神谕条数: 循环 */
     {

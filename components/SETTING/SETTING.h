@@ -16,6 +16,7 @@ typedef enum {
     SET_IDX_ORACLE_N,      /* 神谕每日推送次数 */
     SET_IDX_ORACLE_WIN,    /* 神谕时段 */
     SET_IDX_SHAKE,         /* 摇动翻页开/关 */
+    SET_IDX_SHAKE_SWAP,    /* 陀螺仪互换: 摇动上下/左右方向调换 */
     SET_IDX_INFO,          /* 系统信息 */
     SET_IDX_RESET,         /* 初始化 */
     SET_IDX_EXIT,          /* 退出 */
@@ -23,8 +24,8 @@ typedef enum {
 } setting_idx_t;
 
 /* SETTING 组件: 设置(NVS 持久化) + 设置子菜单交互
- *  - 值: 熄屏时长/音量/蜂鸣开关/摇动开关/神谕条数/神谕时段/光标样式
- *  - 副作用在修改时立即应用(蜂鸣开关/音量/摇动开关)
+ *  - 值: 熄屏时长/音量/蜂鸣开关/摇动开关/陀螺仪互换/神谕条数/神谕时段/光标样式
+ *  - 副作用在修改时立即应用(蜂鸣开关/音量/摇动开关/陀螺仪互换)
  *  - 设置子菜单由 UI 主任务驱动: Enter 生成项 -> Select 处理选中 */
 
 void SET_Init(void);                       /* 加载 NVS 设置并应用副作用 */

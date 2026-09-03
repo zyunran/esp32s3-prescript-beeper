@@ -15,6 +15,7 @@
 void MPU_Init(void);                /* GPIO + 软件I2C + MPU6050 寄存器初始化(不含任务) */
 void MPU_Start(void *key_q);        /* 启动采样任务(key_q=按键队列, 摇动事件送入) */
 void MPU_SetShake(uint8_t on);      /* 摇动检测开关(1=开, 0=关; 默认开; 只禁摇动, 采样/平衡照常) */
+void MPU_SetShakeSwap(uint8_t on);  /* 陀螺仪方向互换(1=上/下调换 + 左/右调换; 0=默认) */
 uint8_t MPU_EvtWasShake(void);      /* 1=最近200ms内有摇动产生的 确认/退出 事件(平衡页过滤用) */
 void MPU_Suspend(void);             /* 待机暂停采样(标志位自查, 不打断 I2C 事务防总线锁死); 唤醒后 MPU_Resume 恢复 */
 void MPU_Resume(void);              /* 恢复采样并强制立即重新探测 */

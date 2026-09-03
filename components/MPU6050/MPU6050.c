@@ -330,13 +330,19 @@ static TaskHandle_t  mpu_task_h = NULL;       /* 采样任务句柄 */
 static volatile uint8_t mpu_paused = 0;       /* 待机暂停标志(任务自查, 不打断 I2C 事务) */
 static uint32_t mpu_last_retry = 0;           /* 探测重试时刻(全局: 唤醒后强制立即重探测) */
 static volatile uint8_t mpu_shake_en = 1;     /* 摇动检测开关(设置可关, 只禁摇动): 采样任务与设置侧跨任务, volatile */
-static volatile uint8_t mpu_shake_dir = 0;    /* 最近摇动方向: 1=上 2=下 3=左 4=右(平衡页反馈) */
+static volatile uint8_t mpu_shake_swap = 0;   /* 陀螺仪方向互换(1=上下互换 + 左右互换): 采样任务与设置侧跨任务, volatile */
+static volatile uint8_t mpu_shake_dir = 0;    /* 最近摇动方向: 1=上 2=下 3=左 4=右(平衡页反馈, 始终按物理方向) */
 static volatile uint32_t mpu_shake_at = 0;    /* 摇动时刻 ms */
 static volatile uint32_t mpu_ok_evt_at = 0;   /* 最近一次摇动产生的 确认/退出 事件入队时刻 ms(平衡页过滤用) */
 
 void MPU_SetShake(uint8_t on)
 {
     mpu_shake_en = on ? 1 : 0;
+}
+
+void MPU_SetShakeSwap(uint8_t on)
+{
+    mpu_shake_swap = on ? 1 : 0;
 }
 
 /* 待机暂停采样(省电): 用标志位而非 vTaskSuspend —— vTaskSuspend 可能正好挂在 I2C 传输中途,
@@ -471,8 +477,17 @@ static void mpu_shake(int16_t ax, int16_t ay, int16_t az, float gxd, float gyd, 
     }
     cd_until = now + SHAKE_COOLDOWN;
     need_still = 1; still_since = 0;
+    /* 设置页「陀螺仪互换」: 上/下互换 + 左/右互换.
+     * 先记录物理方向供平衡页显示, 再对实际入队事件做互换. */
     mpu_shake_dir = (evt == EVT_UP) ? 1 : (evt == EVT_DOWN) ? 2 : (evt == EVT_OK) ? 3 : 4;
     mpu_shake_at = now;
+    if (mpu_shake_swap)
+    {
+        if      (evt == EVT_UP)       evt = EVT_DOWN;
+        else if (evt == EVT_DOWN)     evt = EVT_UP;
+        else if (evt == EVT_OK)       evt = EVT_LONG_OK;
+        else if (evt == EVT_LONG_OK)  evt = EVT_OK;
+    }
     if (evt == EVT_OK || evt == EVT_LONG_OK) mpu_ok_evt_at = now;
     if (mpu_q) xQueueSend(mpu_q, &evt, 0);
 }
