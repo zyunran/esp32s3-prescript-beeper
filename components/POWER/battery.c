@@ -116,15 +116,14 @@ static uint8_t bat_volt_to_pct(int32_t v)
     return 100;
 }
 
-uint8_t BAT_GetPct(void)
+/* 采样 + 低通滤波, 返回 ADC 侧电压(mV); 失败返回 -1.
+ * 调用方必须已持有 bat_mux. */
+static int32_t bat_measure_mv_locked(void)
 {
     int32_t mv = -1;
-    if (!bat_mux || xSemaphoreTake(bat_mux, portMAX_DELAY) != pdTRUE)
-    {
-        return 255;                          /* 锁不可用: 保守视为无电池 */
-    }
 
-    if (bat_adc)
+    if (!bat_adc) return -1;
+
     {
         int32_t sum = 0;
         int  valid = 0;
@@ -160,7 +159,17 @@ uint8_t BAT_GetPct(void)
             mv = bat_last_mv;
         }
     }
+    return mv;
+}
 
+uint8_t BAT_GetPct(void)
+{
+    int32_t mv;
+    if (!bat_mux || xSemaphoreTake(bat_mux, portMAX_DELAY) != pdTRUE)
+    {
+        return 255;                          /* 锁不可用: 保守视为无电池 */
+    }
+    mv = bat_measure_mv_locked();
     xSemaphoreGive(bat_mux);
 
     if (mv < 0)
@@ -171,5 +180,26 @@ uint8_t BAT_GetPct(void)
         int32_t v = mv * BAT_DIV;            /* 换算到电池端电压 */
         if (v < BAT_V_NONE) return 255;      /* 未接电池(纯USB) */
         return bat_volt_to_pct(v);
+    }
+}
+
+uint16_t BAT_GetMillivolt(void)
+{
+    int32_t mv;
+    if (!bat_mux || xSemaphoreTake(bat_mux, portMAX_DELAY) != pdTRUE)
+    {
+        return 0;                            /* 锁不可用: 视为无电池 */
+    }
+    mv = bat_measure_mv_locked();
+    xSemaphoreGive(bat_mux);
+
+    if (mv < 0)
+    {
+        return 0;                            /* 读取/校准失败 */
+    }
+    {
+        int32_t v = mv * BAT_DIV;            /* 换算到电池端电压 */
+        if (v < BAT_V_NONE) return 0;        /* 未接电池(纯USB) */
+        return (uint16_t)v;
     }
 }

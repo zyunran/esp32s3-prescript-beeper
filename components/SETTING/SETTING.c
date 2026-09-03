@@ -7,6 +7,7 @@
 #include "BUZZER.h"
 #include "SOUND.h"
 #include "MPU6050.h"
+#include "BATTERY.h"
 #include "ORACLE.h"
 #include "GACHA.h"
 #include "evt.h"
@@ -415,12 +416,13 @@ void SET_SubmenuSelect(uint8_t sel)
     /* SET_IDX_INFO(系统信息)/SET_IDX_RESET(初始化) 由 main.c 处理 */
 }
 
-/* ================= 系统信息页(乱码破译格式, 3 页上下翻页) =================
+/* ================= 系统信息页(乱码破译格式, 4 页上下翻页) =================
  * 由 main.c 进入; 上下键翻页(SET_InfoNav), 其他键返回设置子菜单.
  *  页0 系统: 堆 / 栈 / 开机次数
  *  页1 签收: 神谕接收次数 / 每日签次数 / 已抽人格数(网页图鉴共 120)
- *  页2 战绩: 拼点累计积分 / 历史最高伤害 / 历史最高连胜 */
-#define SET_INFO_PAGES  3
+ *  页2 电量: 实时电量% + 电池电压(精度 0.01V)
+ *  页3 战绩: 拼点累计积分 / 历史最高伤害 / 历史最高连胜 */
+#define SET_INFO_PAGES  4
 static uint8_t set_info_page = 0;
 
 /* 读 NVS "info"/"dsign"(main.c 每日签时 +1) */
@@ -474,6 +476,21 @@ static void set_info_render(void)
                      (unsigned)set_dsign_count(),
                      (unsigned)GACHA_CoinOwnedCount());
             break;
+        case 2:
+        {
+            uint8_t pct = BAT_GetPct();
+            uint16_t mv = BAT_GetMillivolt();
+            if (pct == 255 || mv == 0)
+            {
+                snprintf(buf, sizeof(buf), "电量 无电池\n电压 --");
+            }
+            else
+            {
+                snprintf(buf, sizeof(buf), "电量 %u%%\n电压 %u.%02uV",
+                         (unsigned)pct, (unsigned)(mv / 1000), (unsigned)(mv % 1000));
+            }
+            break;
+        }
         default:
         {
             int32_t total, maxdmg, maxstrk;

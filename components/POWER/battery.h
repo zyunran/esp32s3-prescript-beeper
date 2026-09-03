@@ -19,5 +19,6 @@
 
 void   BAT_Init(void);      /* 初始化 ADC(幂等) */
 uint8_t BAT_GetPct(void);   /* 0-100 电量%; 255=无电池 */
+uint16_t BAT_GetMillivolt(void); /* 电池端实时电压 mV; 0=无电池/读取失败 */
 
 #endif
