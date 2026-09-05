@@ -53,11 +53,10 @@
 
 /* ================= 按键事件(事件码定义在 COMMON/evt.h, 全工程唯一来源) =================
  * 注: 长按 OK=返回上一级; 连发参数改这里即可调整手感 */
-/* 长按参数(改这里即可调整手感):
- *   LONG_PRESS_MS  = 判定"长按"的按住时长(超此即长按)
- *   REPEAT_PRESS_MS = 长按连发间隔(上下键按住后每隔此时间滚动一项) */
-#define LONG_PRESS_MS   400
-#define REPEAT_PRESS_MS 40
+/* 长按手感由网页「长按速度」控制:
+ *   慢: 判定600ms / 连发120ms
+ *   中: 判定400ms / 连发40ms
+ *   快: 判定300ms / 连发25ms */
 
 /* 开启联网后, 超过此时长仍没连上则判定"未连上"并反馈 */
 #define NET_CONNECT_RESULT_MS  12000
@@ -83,6 +82,7 @@ static uint8_t  aod_mode = 0;         /* 0=普通时钟 1=神谕64库信息 */
 static char     aod_oracle[INS_PRESET_LEN] = {0};
 static uint32_t aod_last_draw = 0;    /* AOD 重绘节流 */
 static uint32_t aod_auto_last = 0;    /* 息屏时钟自动重播乱码计时 */
+static uint32_t aod_auto_next = 0;    /* 下次自动重播乱码的随机延时 ms */
 static uint8_t  aod_saved_font = 0xFF; /* 进入神谕64模式前保存的破译字号(0xFF=未保存) */
 
 /* ================= 菜单返回栈 =================
@@ -231,6 +231,11 @@ static void show_ip_screen(void)
 
 
 /* ================= 息屏时钟(AOD) 绘制/交互 ================= */
+static uint32_t aod_auto_rand_ms(void)
+{
+    return 1000u + (esp_random() % 30000u);   /* 1~30 秒随机 */
+}
+
 static void aod_clock_draw(void)
 {
     char clk[12];
@@ -295,6 +300,8 @@ static void aod_show_current(uint8_t glitch, uint8_t replay)
             char clk[16];
             NET_TimeStrCopy(clk, sizeof(clk));
             aod_enter_64();
+            aod_auto_last = (uint32_t)(esp_timer_get_time() / 1000);
+            aod_auto_next = aod_auto_rand_ms();
             INS_Show(clk);
         }
         else
@@ -302,6 +309,7 @@ static void aod_show_current(uint8_t glitch, uint8_t replay)
             aod_leave_64();
             aod_last_draw = (uint32_t)(esp_timer_get_time() / 1000);
             aod_auto_last = aod_last_draw;
+            aod_auto_next = aod_auto_rand_ms();
             aod_clock_draw();
         }
     }
@@ -317,7 +325,7 @@ static void aod_exit(void)
 {
     aod_leave_64();
     aod_active = 0;
-    if (aod_mode == 1) INS_Exit();   /* 内部已 UI_RenderScreen 回主界面 */
+    if (aod_mode == 1 || INS_Decoding()) INS_Exit();   /* 破译中需要先停止 */
     else UI_RenderScreen();
 }
 
@@ -341,9 +349,9 @@ static void aod_handle_key(uint8_t evt, uint32_t now)
 
 /* ================= 输入任务: 按键沿检测 -> 事件队列 =================
  * 非阻塞轮询 GPIO(20ms 天然消抖).
- *  - 上/下键: 按下沿立即发一次(滚动一项); 按住≥LONG_PRESS_MS 后进入连发,
- *    每 REPEAT_PRESS_MS 重复发一次(快速连续滚动).
- *  - OK键: 按住≥LONG_PRESS_MS 发 EVT_LONG_OK(返回上一级), 短按释放发 EVT_OK.
+ *  - 上/下键: 按下沿立即发一次(滚动一项); 按住超过长按阈值后进入连发,
+ *    按连发间隔重复发(快速连续滚动).
+ *  - OK键: 按住超过长按阈值发 EVT_LONG_OK(返回上一级), 短按释放发 EVT_OK.
  * 沿检测: p_x 记录上一轮电平(1=按下); 按下沿=cur&&!prev, 按住中=cur&&prev, 释放沿=!cur&&prev. */
 static void input_task(void *arg)
 {
@@ -354,6 +362,9 @@ static void input_task(void *arg)
     for (;;)
     {
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        uint8_t lspd = SET_LongSpeed();
+        uint32_t long_ms = (lspd == 0) ? 600u : (lspd == 2) ? 300u : 400u;
+        uint32_t rep_ms = (lspd == 0) ? 120u : (lspd == 2) ? 25u : 40u;
         uint8_t up = (gpio_get_level(UI_KEY_UP)   == 0);
         uint8_t ok = (gpio_get_level(UI_KEY_OK)   == 0);
         uint8_t dn = (gpio_get_level(UI_KEY_DOWN) == 0);
@@ -362,7 +373,7 @@ static void input_task(void *arg)
         if (ok && !p_ok)                        ok_press_t = now;        /* 按下沿 */
         else if (ok && p_ok)                                              /* 按住中 */
         {
-            if (ok_press_t && now - ok_press_t >= LONG_PRESS_MS)
+            if (ok_press_t && now - ok_press_t >= long_ms)
             {
                 uint8_t e = EVT_LONG_OK;
                 xQueueSend(key_q, &e, 0);
@@ -389,10 +400,10 @@ static void input_task(void *arg)
         }
         else if (up && p_up)                                              /* 按住中 */
         {
-            if (now - up_hold >= LONG_PRESS_MS)
+            if (now - up_hold >= long_ms)
             {
                 if (!up_rep) { up_rep = 1; up_hold = now; }
-                else if (now - up_hold >= REPEAT_PRESS_MS)
+                else if (now - up_hold >= rep_ms)
                 {
                     up_hold = now;
                     uint8_t e = EVT_UP;
@@ -412,10 +423,10 @@ static void input_task(void *arg)
         }
         else if (dn && p_dn)                                              /* 按住中 */
         {
-            if (now - dn_hold >= LONG_PRESS_MS)
+            if (now - dn_hold >= long_ms)
             {
                 if (!dn_rep) { dn_rep = 1; dn_hold = now; }
-                else if (now - dn_hold >= REPEAT_PRESS_MS)
+                else if (now - dn_hold >= rep_ms)
                 {
                     dn_hold = now;
                     uint8_t e = EVT_DOWN;
@@ -1076,11 +1087,11 @@ static void ui_task(void *arg)
                             aod_last_draw = now;
                             aod_clock_draw();
                         }
-                        /* 网页可配置: 息屏时钟自动重新播放破译乱码的间隔(秒) */
-                        if (SET_AodAutoSec() > 0 &&
-                            now - aod_auto_last >= (uint32_t)SET_AodAutoSec() * 1000)
+                        /* 网页可配置: 息屏时钟自动重新播放破译乱码(1~30秒随机) */
+                        if (SET_AodAuto() && now - aod_auto_last >= aod_auto_next)
                         {
                             aod_auto_last = now;
+                            aod_auto_next = aod_auto_rand_ms();
                             aod_show_current(1, 1);
                         }
                     }

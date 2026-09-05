@@ -29,7 +29,8 @@ static uint8_t  set_key_sound = 1;          /* 按键音: 0=关 1=音频(扬声�
 static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
 static uint8_t  set_shake_swap = 0;        /* 陀螺仪互换: 1=上下/左右调换 */
 static uint8_t  set_aod_clock = 0;            /* 息屏时钟: 1=超时后显示大时钟 */
-static uint16_t set_aod_auto_sec = 0;        /* 息屏时钟自动重播破译乱码间隔秒(0=关) */
+static uint8_t  set_aod_auto = 0;            /* 息屏时钟自动重播破译乱码开关 */
+static uint8_t  set_long_speed = 1;          /* 长按速度: 0=慢 1=中 2=快 */
 static uint8_t  set_oracle_n = 0;
 static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
@@ -81,7 +82,8 @@ static void settings_save(void)
         nvs_set_u8(h, "cur", set_cursor);
         nvs_set_u8(h, "thm", set_theme);
         nvs_set_u8(h, "aod", set_aod_clock);
-        nvs_set_u16(h, "aodt", set_aod_auto_sec);
+        nvs_set_u8(h, "aodt", set_aod_auto);
+        nvs_set_u8(h, "lps", set_long_speed);
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "settings nvs commit failed");
         nvs_close(h);
     }
@@ -113,7 +115,8 @@ void SET_Init(void)
         nvs_get_u8(h, "cur", &set_cursor);
         nvs_get_u8(h, "thm", &set_theme);
         nvs_get_u8(h, "aod", &set_aod_clock);
-        nvs_get_u16(h, "aodt", &set_aod_auto_sec);
+        nvs_get_u8(h, "aodt", &set_aod_auto);
+        nvs_get_u8(h, "lps", &set_long_speed);
         nvs_close(h);
     }
     /* NVS 载入后范围钳位(防损坏/手改越界: to 用选项集合, on/ow 用作数组上限/索引, 见 SET_OracleN/WinRange) */
@@ -132,8 +135,8 @@ void SET_Init(void)
     set_shake = set_shake ? 1 : 0;
     set_shake_swap = set_shake_swap ? 1 : 0;
     set_aod_clock = set_aod_clock ? 1 : 0;
-    if (set_aod_auto_sec != 0 && set_aod_auto_sec != 30 && set_aod_auto_sec != 60 &&
-        set_aod_auto_sec != 120 && set_aod_auto_sec != 300) set_aod_auto_sec = 0;
+    set_aod_auto = set_aod_auto ? 1 : 0;
+    if (set_long_speed > 2) set_long_speed = 1;
     if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 1;   /* 旧存储(蜂鸣/双)归入音频 */
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
     if (set_theme >= SET_THEME_N) set_theme = 0;
@@ -237,13 +240,22 @@ void SET_SetAodClock(uint8_t on)
     settings_save();
 }
 
-/* 息屏时钟自动重播破译间隔(0=关) */
-uint16_t SET_AodAutoSec(void) { return set_aod_auto_sec; }
+/* 息屏时钟自动重播破译: 1=开, 间隔随机 1~30 秒 */
+uint8_t SET_AodAuto(void) { return set_aod_auto; }
 
-void SET_SetAodAutoSec(uint16_t sec)
+void SET_SetAodAuto(uint8_t on)
 {
-    if (sec != 0 && sec != 30 && sec != 60 && sec != 120 && sec != 300) sec = 0;
-    set_aod_auto_sec = sec;
+    set_aod_auto = on ? 1 : 0;
+    settings_save();
+}
+
+/* 长按速度: 0=慢 1=中 2=快 */
+uint8_t SET_LongSpeed(void) { return set_long_speed; }
+
+void SET_SetLongSpeed(uint8_t spd)
+{
+    if (spd > 2) spd = 1;
+    set_long_speed = spd;
     settings_save();
 }
 

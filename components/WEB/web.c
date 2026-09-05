@@ -309,7 +309,8 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddNumberToObject(root, "key_sound", SET_KeySound());
         cJSON_AddNumberToObject(root, "vol", SET_Vol());
         cJSON_AddNumberToObject(root, "timeout", SET_TimeoutSec());
-        cJSON_AddNumberToObject(root, "aod_auto", SET_AodAutoSec());
+        cJSON_AddNumberToObject(root, "aod_auto", SET_AodAuto());
+        cJSON_AddNumberToObject(root, "long_speed", SET_LongSpeed());
         cJSON_AddNumberToObject(root, "oracle_n", SET_OracleN());
         cJSON_AddNumberToObject(root, "oracle_win", SET_OracleWin());
         cJSON_AddNumberToObject(root, "cursor", UI_GetCursorStyle());
@@ -656,10 +657,15 @@ static int web_apply_timeout(cJSON *root)
     if (aod_auto)
     {
         int v;
-        if (!cJSON_IsNumber(aod_auto)) return 0;
-        v = aod_auto->valueint;
-        if (v != 0 && v != 30 && v != 60 && v != 120 && v != 300) return 0;
-        SET_SetAodAutoSec((uint16_t)v);
+        if (!cJSON_IsNumber(aod_auto) || (v = aod_auto->valueint) < 0 || v > 1) return 0;
+        SET_SetAodAuto((uint8_t)v);
+    }
+    cJSON *long_speed = cJSON_GetObjectItem(root, "long_speed");
+    if (long_speed)
+    {
+        int v;
+        if (!cJSON_IsNumber(long_speed) || (v = long_speed->valueint) < 0 || v > 2) return 0;
+        SET_SetLongSpeed((uint8_t)v);
     }
     return 1;
 }
@@ -851,11 +857,9 @@ static int web_cfg_validate(cJSON *root)
     cJSON *ow = cJSON_GetObjectItem(root, "oracle_win");
     if (ow && (!cJSON_IsNumber(ow) || ow->valueint < 0 || ow->valueint > 3)) return 0;
     cJSON *aod_auto = cJSON_GetObjectItem(root, "aod_auto");
-    if (aod_auto)
-    {
-        int av = aod_auto->valueint;
-        if (!cJSON_IsNumber(aod_auto) || (av != 0 && av != 30 && av != 60 && av != 120 && av != 300)) return 0;
-    }
+    if (aod_auto && (!cJSON_IsNumber(aod_auto) || (aod_auto->valueint != 0 && aod_auto->valueint != 1))) return 0;
+    cJSON *long_speed = cJSON_GetObjectItem(root, "long_speed");
+    if (long_speed && (!cJSON_IsNumber(long_speed) || long_speed->valueint < 0 || long_speed->valueint > 2)) return 0;
     cJSON *cur = cJSON_GetObjectItem(root, "cursor");
     if (cur && (!cJSON_IsNumber(cur) || cur->valueint < 0 || cur->valueint >= UI_CURSOR_N)) return 0;
     cJSON *garble = cJSON_GetObjectItem(root, "garble");

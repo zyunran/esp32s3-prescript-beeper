@@ -36,8 +36,10 @@ uint8_t  SET_Theme(void);                  /* 主题预设: 0=柔和绿 1=赛博
 void     SET_SetTheme(uint8_t idx);        /* 设主题预设并保存 */
 uint8_t  SET_AodClock(void);               /* 息屏时钟: 0=关 1=开 */
 void     SET_SetAodClock(uint8_t on);      /* 设息屏时钟并保存 */
-uint16_t SET_AodAutoSec(void);             /* 息屏时钟自动重播乱码间隔秒(0=关) */
-void     SET_SetAodAutoSec(uint16_t sec);  /* 设息屏时钟自动重播间隔并保存 */
+uint8_t  SET_AodAuto(void);                  /* 息屏时钟自动重播乱码: 0=关 1=开 */
+void     SET_SetAodAuto(uint8_t on);       /* 设息屏时钟自动重播并保存 */
+uint8_t  SET_LongSpeed(void);               /* 长按速度: 0=慢 1=中 2=快 */
+void     SET_SetLongSpeed(uint8_t spd);     /* 设长按速度并保存 */
 uint8_t  SET_OracleN(void);                /* 神谕每日条数(0=关) */
 uint8_t  SET_OracleWin(void);              /* 神谕时段预设索引 */
 const uint16_t *SET_OracleWinRange(void);  /* 神谕时段 [start,end] 当日分钟 */
