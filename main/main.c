@@ -43,6 +43,7 @@
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
+#include "esp_random.h"
 #include "evt.h"
 #include <string.h>
 #include <strings.h>
@@ -75,6 +76,14 @@ static uint8_t reset_pending = 0;     /* 初始化确认中: 再按OK清除NVS�
 static uint8_t set_info_active = 0;   /* 1=正在"系统信息"翻页页(上下键翻页, 其他键返回) */
 static uint8_t ota_info_active = 0;   /* 1=正在"版本更新(OTA)"信息页 */
 static uint32_t ota_ui_last = 0;      /* OTA 信息页重绘节流 */
+
+/* ================= 息屏时钟(AOD) ================= */
+static uint8_t  aod_active = 0;       /* 1=息屏时钟模式 */
+static uint8_t  aod_mode = 0;         /* 0=普通时钟 1=神谕64库信息 */
+static char     aod_oracle[INS_PRESET_LEN] = {0};
+static uint32_t aod_glitch_until = 0; /* 普通时钟乱码重播截止时刻 */
+static uint32_t aod_last_draw = 0;    /* AOD 重绘节流 */
+static uint8_t  aod_saved_font = 0xFF; /* 进入神谕64模式前保存的破译字号(0xFF=未保存) */
 
 /* ================= 菜单返回栈 =================
  * 进入子页面/信息页/计时等之前压入当前屏幕, 返回时弹栈还原, 消除各处硬编码的"回哪"关系.
@@ -218,6 +227,115 @@ static void show_ip_screen(void)
     snprintf(buf, sizeof(buf), "IP:%s", ip[0] ? ip : "未联网");
     INS_Show(buf);
     ui_push(ST_INS);
+}
+
+
+/* ================= 息屏时钟(AOD) 绘制/交互 ================= */
+static void aod_clock_draw(uint8_t glitch)
+{
+    static const char set[] = "0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char clk[12];
+    char ch[2] = {0, 0};
+    uint16_t x, total;
+    int16_t y;
+    const char *p;
+
+    NET_TimeStrCopy(clk, sizeof(clk));
+    UI_ScrClear(UI_COLOR_BG);
+    total = (uint16_t)strlen(clk) * 32;          /* 64px 下 ASCII 宽 32px */
+    x = (LCD_WIDTH > total) ? (uint16_t)((LCD_WIDTH - total) / 2) : 0;
+    y = (int16_t)((LCD_HEIGHT - 64) / 2);
+
+    for (p = clk; *p; p++)
+    {
+        ch[0] = *p;
+        if (glitch && *p != ':')
+        {
+            ch[0] = set[esp_random() % (sizeof(set) - 1)];
+        }
+        x += UI_ScrGlyphF(x, y, ch, 64, UI_COLOR_TIME, UI_COLOR_BG);
+    }
+    UI_ScrBlit();
+}
+
+static void aod_oracle_pick(void)
+{
+    static char buf[INS_PRESET_MAX][INS_PRESET_LEN];
+    uint8_t n = 0;
+    if (INS_PresetsEx(3, buf, INS_PRESET_MAX, &n) && n > 0)
+    {
+        strncpy(aod_oracle, buf[esp_random() % n], sizeof(aod_oracle) - 1);
+        aod_oracle[sizeof(aod_oracle) - 1] = '\0';
+    }
+    else
+    {
+        strcpy(aod_oracle, "_CLEAR.__");
+    }
+}
+
+static void aod_show_current(uint8_t replay)
+{
+    if (aod_mode == 0)
+    {
+        if (aod_saved_font != 0xFF)   /* 从神谕64退出到普通时钟: 恢复原破译字号 */
+        {
+            INS_SetFont(aod_saved_font);
+            aod_saved_font = 0xFF;
+        }
+        aod_last_draw = (uint32_t)(esp_timer_get_time() / 1000);
+        aod_glitch_until = 0;
+        aod_clock_draw(0);
+    }
+    else
+    {
+        /* 神谕信息固定使用 64px 大字专用库 */
+        if (aod_saved_font == 0xFF)
+        {
+            aod_saved_font = INS_Font();
+            if (aod_saved_font != 3) INS_SetFont(3);
+        }
+        if (!replay || aod_oracle[0] == '\0') aod_oracle_pick();
+        INS_Show(aod_oracle);
+    }
+}
+
+static void aod_exit(void)
+{
+    if (aod_saved_font != 0xFF)
+    {
+        INS_SetFont(aod_saved_font);
+        aod_saved_font = 0xFF;
+    }
+    aod_active = 0;
+    if (aod_mode == 1) INS_Exit();   /* 内部已 UI_RenderScreen 回主界面 */
+    else UI_RenderScreen();
+}
+
+static void aod_handle_key(uint8_t evt, uint32_t now)
+{
+    if (evt == EVT_UP || evt == EVT_DOWN)
+    {
+        aod_mode = !aod_mode;
+        aod_show_current(0);
+    }
+    else if (evt == EVT_OK)
+    {
+        if (aod_mode == 0)
+        {
+            aod_last_draw = now;
+            aod_glitch_until = now + 300;
+            aod_clock_draw(1);
+        }
+        else if (aod_oracle[0])
+        {
+            INS_Show(aod_oracle);
+        }
+    }
+    else if (evt == EVT_LONG_OK)
+    {
+        aod_exit();
+    }
+    PWR_Activity(now);
 }
 
 /* ================= 输入任务: 按键沿检测 -> 事件队列 =================
@@ -860,6 +978,7 @@ static void ui_task(void *arg)
             }
             if (ORACLE_Due())
             {
+                if (aod_active) aod_active = 0;
                 ORACLE_Delivered();
                 if (ui_state == ST_MAIN)
                 {
@@ -871,6 +990,7 @@ static void ui_task(void *arg)
             }
             if (ALM_Check())       /* 有闹钟到点(已在 ALM 内标记当日触发): 任意界面都打断显示 */
             {
+                if (aod_active) aod_active = 0;
                 CLOUD_NotifyEvent(CLOUD_EVT_ALARM, NULL);   /* 云端事件: 闹钟到点(累计计数在 CLOUD 内) */
                 ui_to_main();      /* 与待机闹钟唤醒一致: 先回主界面再显示闹钟指令 */
                 ALM_Show();        /* 闹钟专属指令乱码破译 */
@@ -879,6 +999,7 @@ static void ui_task(void *arg)
             }
             if (TODO_RemindDue())  /* 有待办提醒到点: 亮屏+蜂鸣+乱码显示待办 */
             {
+                if (aod_active) aod_active = 0;
                 CLOUD_NotifyEvent(CLOUD_EVT_TODO, TODO_RemindText());   /* 云端事件: 待办提醒(msg=待办文本) */
                 ui_to_main();
                 INS_BeepNext(1);   /* 待办提醒: 结尾三连急促蜂鸣(与破译完成对齐, 替代旧的独立三响) */
@@ -892,6 +1013,11 @@ static void ui_task(void *arg)
         if (xQueueReceive(key_q, &evt, (PWR_ScreenOn() ? 20u : 200u) / portTICK_PERIOD_MS))
         {
             PWR_Activity(now);   /* 任意按键均刷新活动时刻 */
+            if (aod_active)       /* 息屏时钟: OK/上下/长按OK 按 AOD 规则, 不透传给菜单 */
+            {
+                aod_handle_key(evt, now);
+                continue;
+            }
             if (!PWR_ScreenOn())     /* 屏幕休眠: 第一键仅唤醒(按键本身不透传) */
             {
                 PWR_Wake(now);
@@ -928,148 +1054,191 @@ static void ui_task(void *arg)
 
         if (PWR_ScreenOn())
         {
-            /* 网页保存配置/待办, 或使用者名变化: 当前界面即时刷新
-             * (绘制统一在本任务做, 避免 httpd 任务与 UI 并发;
-             *  INS_UserName 返回共享快照缓冲, 一次性拷到局部串, 防比较/记录/显示读到不同版本) */
+            if (aod_active)
             {
-                char user_now[INS_USER_NAME_MAX];
-                strncpy(user_now, INS_UserName(), sizeof(user_now) - 1);
-                user_now[sizeof(user_now) - 1] = '\0';
-                if (WEB_ConfigDirty() || strcmp(user_now, ui_user_last) != 0)
+                /* 息屏时钟: 只更新 AOD 画面, 不走普通主界面刷新 */
+                if (aod_mode == 0)
                 {
-                    if (ui_state == ST_MAIN)
+                    if (now < aod_glitch_until)
                     {
-                        WEB_ConfigDirtyClear();
-                        strncpy(ui_user_last, user_now, sizeof(ui_user_last) - 1);
-                        ui_user_last[sizeof(ui_user_last) - 1] = '\0';
-                        UI_SetUserTitle(user_now);
-                        UI_RenderScreen();
-                    }
-                    else if (ui_state == ST_TODO)
-                    {
-                        WEB_ConfigDirtyClear();
-                        TODO_Enter();   /* 网页改了待办: 刷新列表(光标重置) */
-                    }
-                    else if (ui_state == ST_ALARM)
-                    {
-                        WEB_ConfigDirtyClear();
-                        ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
-                    }
-                    else if (ui_state == ST_SUB)
-                    {
-                        WEB_ConfigDirtyClear();
-                        if (ui_menu_cfg[sub_kind].fn == UI_FN_SETTING)
+                        if (now - aod_last_draw >= 40)
                         {
-                            SET_SubmenuEnter();   /* 设置项文字含当前值: 网页改动后刷新标签 */
-                            UI_SubMenuSetCur(UI_SubMenuCur());
-                        }
-                        else
-                        {
-                            UI_SubMenuSetCur(UI_SubMenuCur());   /* 网页改了主题/颜色: 就地重绘当前子菜单 */
+                            aod_last_draw = now;
+                            aod_clock_draw(1);
                         }
                     }
-                }
-            }
-            if (ui_state == ST_MAIN)
-            {
-                if (LOOM_TimeOn())
-                {
-                    /* 彩蛋「纺织时间」(LOOM 组件): 现实1秒=显示1小时, 显示节流 ~5次/秒防刷屏打满 */
-                    char d[8], t[12], w[8];
-                    LOOM_TimeGet(d, sizeof(d), t, sizeof(t), w, sizeof(w));
-                    if (now - egg_draw_last >= 200)
+                    else if (aod_glitch_until)   /* 乱码结束: 立即恢复真实时钟 */
                     {
-                        egg_draw_last = now;
-                        UI_TimeSet(d, t, w);
+                        aod_glitch_until = 0;
+                        aod_last_draw = now;
+                        aod_clock_draw(0);
                     }
-                    if (now - egg_wx_last >= 1200)   /* 天气每1.2秒跳一次(随机词+随机温湿) */
+                    else if (now - aod_last_draw >= 1000)
                     {
-                        egg_wx_last = now;
-                        UI_WeatherSet(NET_WeatherMadStr());
+                        aod_last_draw = now;
+                        aod_clock_draw(0);
                     }
                 }
                 else
                 {
-                    char date[8], clk[12], week[8], wx[32];
-                    NET_DateStrCopy(date, sizeof(date));
-                    NET_TimeStrCopy(clk, sizeof(clk));
-                    NET_WeekStrCopy(week, sizeof(week));
-                    UI_TimeSet(date, clk, week);               /* 主页面左侧日期+星期+时间刷新(变化才重绘) */
-                    UI_WeatherSet(NET_WeatherStrCopy(wx, sizeof(wx)) ? wx : NULL);   /* 无/超期=NULL->清除 */
-                }
-                UI_WifiSet(NET_WifiOk());                      /* 左上角网络图标(绿=已连/灰=未连) */
-                if (now - bat_last >= 2000)                    /* 每2秒读一次电量(数值变化才重绘) */
-                {
-                    bat_last = now;
-                    UI_BatterySet(BAT_GetPct());               /* 左上角电量图标 */
+                    INS_Tick();
                 }
             }
-            else if (ui_state == ST_GACHA)
+            else
             {
-                GACHA_Tick();                      /* 抽卡动画/语音/滚动推进(非阻塞) */
-                if (!GACHA_Busy())                 /* 抽卡"退出"已重绘主界面 -> 回主态 */
+                /* 网页保存配置/待办, 或使用者名变化: 当前界面即时刷新
+                 * (绘制统一在本任务做, 避免 httpd 任务与 UI 并发;
+                 *  INS_UserName 返回共享快照缓冲, 一次性拷到局部串, 防比较/记录/显示读到不同版本) */
                 {
-                    ui_pop();
-                }
-            }
-            else if (ui_state == ST_ASK)
-            {
-                INS_Tick();                        /* 答案破译动画推进(非阻塞) */
-                if (!ANS_Busy())                   /* 询问"退出"已重绘主界面 -> 回主态 */
-                {
-                    ui_pop();
-                }
-            }
-            else if (ui_state == ST_ALARM)
-            {
-                ALM_Tick();                      /* 闹钟子界面推进(非阻塞) */
-                if (!ALM_Busy()) ui_pop();  /* 二级菜单"退出" -> 回 TTL 子菜单 */
-            }
-            else if (ui_state == ST_INS || ui_state == ST_INFO)
-            {
-                if (ui_state == ST_INFO && ota_info_active)
-                {
-                    if (now - ota_ui_last >= 200)   /* 节流重绘, 避免每 20ms 全屏刷屏 */
+                    char user_now[INS_USER_NAME_MAX];
+                    strncpy(user_now, INS_UserName(), sizeof(user_now) - 1);
+                    user_now[sizeof(user_now) - 1] = '\0';
+                    if (WEB_ConfigDirty() || strcmp(user_now, ui_user_last) != 0)
                     {
-                        char ota_st[64];
-                        ota_ui_last = now;
-                        ota_drv_status(ota_st, sizeof(ota_st));
-                        UI_FullScreen("版本更新", ota_st);
-                    }
-                }
-                else
-                {
-                    INS_Tick();                    /* 破译动画推进(非阻塞; 系统信息/开启配网提示也走乱码) */
-                }
-                /* 彩蛋确认「MADE IN HEAVEN」: 破译完成后定格片刻, 自动回主界面看时间加速 */
-                if (egg_confirm && ui_state == ST_INS)
-                {
-                    if (INS_Finished())
-                    {
-                        if (egg_hold_t == 0) egg_hold_t = now;
-                        else if (now - egg_hold_t >= 900)
+                        if (ui_state == ST_MAIN)
                         {
-                            egg_confirm = 0;
-                            egg_hold_t = 0;
-                            INS_Exit();            /* 内部已 UI_RenderScreen 回主界面 */
-                            ui_pop();
-                            PWR_Activity(now);   /* 防回主界面后立即被判息屏 */
+                            WEB_ConfigDirtyClear();
+                            strncpy(ui_user_last, user_now, sizeof(ui_user_last) - 1);
+                            ui_user_last[sizeof(ui_user_last) - 1] = '\0';
+                            UI_SetUserTitle(user_now);
+                            UI_RenderScreen();
+                        }
+                        else if (ui_state == ST_TODO)
+                        {
+                            WEB_ConfigDirtyClear();
+                            TODO_Enter();   /* 网页改了待办: 刷新列表(光标重置) */
+                        }
+                        else if (ui_state == ST_ALARM)
+                        {
+                            WEB_ConfigDirtyClear();
+                            ALM_WebChanged();   /* 网页改了闹钟: 列表就地刷新 */
+                        }
+                        else if (ui_state == ST_SUB)
+                        {
+                            WEB_ConfigDirtyClear();
+                            if (ui_menu_cfg[sub_kind].fn == UI_FN_SETTING)
+                            {
+                                SET_SubmenuEnter();   /* 设置项文字含当前值: 网页改动后刷新标签 */
+                                UI_SubMenuSetCur(UI_SubMenuCur());
+                            }
+                            else
+                            {
+                                UI_SubMenuSetCur(UI_SubMenuCur());   /* 网页改了主题/颜色: 就地重绘当前子菜单 */
+                            }
                         }
                     }
-                    else egg_hold_t = 0;           /* 仍在破译, 重置定格计时 */
                 }
-            }
-            else if (ui_state == ST_MPU)
-            {
-                MPU_BalanceTick();                 /* 平衡: 实时刷新 横滚/俯仰/航向 */
-            }
-
-            /* 息屏检查: 无按键超过设置时长则关背光.
-             * OTA 升级进行中不判息屏: 息屏->待机会经 stby_net_stop 关 WiFi, 下载被掐断(表现为"下载中断") */
-            if (SET_TimeoutSec() > 0 && !ota_drv_busy() &&
-                (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
-            {
-                PWR_LcdOff();
+                if (ui_state == ST_MAIN)
+                {
+                    if (LOOM_TimeOn())
+                    {
+                        /* 彩蛋「纺织时间」(LOOM 组件): 现实1秒=显示1小时, 显示节流 ~5次/秒防刷屏打满 */
+                        char d[8], t[12], w[8];
+                        LOOM_TimeGet(d, sizeof(d), t, sizeof(t), w, sizeof(w));
+                        if (now - egg_draw_last >= 200)
+                        {
+                            egg_draw_last = now;
+                            UI_TimeSet(d, t, w);
+                        }
+                        if (now - egg_wx_last >= 1200)   /* 天气每1.2秒跳一次(随机词+随机温湿) */
+                        {
+                            egg_wx_last = now;
+                            UI_WeatherSet(NET_WeatherMadStr());
+                        }
+                    }
+                    else
+                    {
+                        char date[8], clk[12], week[8], wx[32];
+                        NET_DateStrCopy(date, sizeof(date));
+                        NET_TimeStrCopy(clk, sizeof(clk));
+                        NET_WeekStrCopy(week, sizeof(week));
+                        UI_TimeSet(date, clk, week);               /* 主页面左侧日期+星期+时间刷新(变化才重绘) */
+                        UI_WeatherSet(NET_WeatherStrCopy(wx, sizeof(wx)) ? wx : NULL);   /* 无/超期=NULL->清除 */
+                    }
+                    UI_WifiSet(NET_WifiOk());                      /* 左上角网络图标(绿=已连/灰=未连) */
+                    if (now - bat_last >= 2000)                    /* 每2秒读一次电量(数值变化才重绘) */
+                    {
+                        bat_last = now;
+                        UI_BatterySet(BAT_GetPct());               /* 左上角电量图标 */
+                    }
+                }
+                else if (ui_state == ST_GACHA)
+                {
+                    GACHA_Tick();                      /* 抽卡动画/语音/滚动推进(非阻塞) */
+                    if (!GACHA_Busy())                 /* 抽卡"退出"已重绘主界面 -> 回主态 */
+                    {
+                        ui_pop();
+                    }
+                }
+                else if (ui_state == ST_ASK)
+                {
+                    INS_Tick();                        /* 答案破译动画推进(非阻塞) */
+                    if (!ANS_Busy())                   /* 询问"退出"已重绘主界面 -> 回主态 */
+                    {
+                        ui_pop();
+                    }
+                }
+                else if (ui_state == ST_ALARM)
+                {
+                    ALM_Tick();                      /* 闹钟子界面推进(非阻塞) */
+                    if (!ALM_Busy()) ui_pop();  /* 二级菜单"退出" -> 回 TTL 子菜单 */
+                }
+                else if (ui_state == ST_INS || ui_state == ST_INFO)
+                {
+                    if (ui_state == ST_INFO && ota_info_active)
+                    {
+                        if (now - ota_ui_last >= 200)   /* 节流重绘, 避免每 20ms 全屏刷屏 */
+                        {
+                            char ota_st[64];
+                            ota_ui_last = now;
+                            ota_drv_status(ota_st, sizeof(ota_st));
+                            UI_FullScreen("版本更新", ota_st);
+                        }
+                    }
+                    else
+                    {
+                        INS_Tick();                    /* 破译动画推进(非阻塞; 系统信息/开启配网提示也走乱码) */
+                    }
+                    /* 彩蛋确认「MADE IN HEAVEN」: 破译完成后定格片刻, 自动回主界面看时间加速 */
+                    if (egg_confirm && ui_state == ST_INS)
+                    {
+                        if (INS_Finished())
+                        {
+                            if (egg_hold_t == 0) egg_hold_t = now;
+                            else if (now - egg_hold_t >= 900)
+                            {
+                                egg_confirm = 0;
+                                egg_hold_t = 0;
+                                INS_Exit();            /* 内部已 UI_RenderScreen 回主界面 */
+                                ui_pop();
+                                PWR_Activity(now);   /* 防回主界面后立即被判息屏 */
+                            }
+                        }
+                        else egg_hold_t = 0;           /* 仍在破译, 重置定格计时 */
+                    }
+                }
+                else if (ui_state == ST_MPU)
+                {
+                    MPU_BalanceTick();                 /* 平衡: 实时刷新 横滚/俯仰/航向 */
+                }
+    
+                /* 息屏检查: 无按键超过设置时长则关背光.
+                 * OTA 升级进行中不判息屏: 息屏->待机会经 stby_net_stop 关 WiFi, 下载被掐断(表现为"下载中断") */
+                if (SET_TimeoutSec() > 0 && !ota_drv_busy() &&
+                    (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
+                {
+                    if (SET_AodClock())
+                    {
+                        aod_active = 1;
+                        aod_mode = 0;
+                        aod_show_current(0);
+                        PWR_Activity(now);
+                    }
+                    else
+                    {
+                        PWR_LcdOff();
+                    }
+                }
             }
         }
         BUZZER_Tick();   /* 恒推进蜂鸣: 息屏时也把已开始的哔走完, 防蜂鸣卡在响发烫 */

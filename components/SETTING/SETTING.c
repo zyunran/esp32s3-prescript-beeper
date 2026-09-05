@@ -1,5 +1,5 @@
 /* SETTING 组件: 设置(NVS 持久化) + 设置子菜单交互
- * 值: 熄屏时长 / 音量 / 蜂鸣开关 / 摇动翻页 / 神谕条数 / 神谕时段 / 光标样式
+ * 值: 熄屏时长 / 息屏时钟 / 音量 / 蜂鸣开关 / 摇动翻页 / 光标样式
  * 子菜单项文字含当前值, 选中即修改并重绘 */
 #include "SETTING.h"
 #include "UI.h"
@@ -28,7 +28,8 @@ static uint8_t  set_beep = 1;               /* 蜂鸣器总开关(有源) */
 static uint8_t  set_key_sound = 1;          /* 按键音: 0=关 1=音频(扬声器) */
 static uint8_t  set_shake = 1;              /* 摇动翻页开关(MPU6050) */
 static uint8_t  set_shake_swap = 0;        /* 陀螺仪互换: 1=上下/左右调换 */
-static uint8_t  set_oracle_n = 3;
+static uint8_t  set_aod_clock = 0;            /* 息屏时钟: 1=超时后显示大时钟 */
+static uint8_t  set_oracle_n = 0;
 static uint8_t  set_oracle_win = 0;
 static uint8_t  set_cursor = UI_CURSOR_DEFAULT;
 static uint8_t  set_theme = 0;              /* 主题预设: 0=柔和绿 1=赛博青 2=深夜黑 3=标准黑白 */
@@ -51,7 +52,6 @@ static const uint16_t set_oracle_win_opt[][2] = {
     { 1200, 1440 },   /* 2 晚上 20-24 */
     { 0,   480 },     /* 3 凌晨 0-8 */
 };
-static const char *set_oracle_win_name[] = { "白天", "全天", "晚上", "凌晨" };
 #define SET_ORACLE_WIN_N (sizeof(set_oracle_win_opt) / sizeof(set_oracle_win_opt[0]))
 
 static const char *set_cursor_name[] = { "白线", "白块", "角框" };
@@ -79,6 +79,7 @@ static void settings_save(void)
         nvs_set_u8(h, "ow", set_oracle_win);
         nvs_set_u8(h, "cur", set_cursor);
         nvs_set_u8(h, "thm", set_theme);
+        nvs_set_u8(h, "aod", set_aod_clock);
         if (nvs_commit(h) != ESP_OK) ESP_LOGW(TAG, "settings nvs commit failed");
         nvs_close(h);
     }
@@ -109,6 +110,7 @@ void SET_Init(void)
         nvs_get_u8(h, "ow", &set_oracle_win);
         nvs_get_u8(h, "cur", &set_cursor);
         nvs_get_u8(h, "thm", &set_theme);
+        nvs_get_u8(h, "aod", &set_aod_clock);
         nvs_close(h);
     }
     /* NVS 载入后范围钳位(防损坏/手改越界: to 用选项集合, on/ow 用作数组上限/索引, 见 SET_OracleN/WinRange) */
@@ -119,13 +121,14 @@ void SET_Init(void)
         if (i == SET_TIMEOUT_N) set_timeout_sec = 60;
         for (i = 0; i < SET_ORACLE_N_N; i++)
             if (set_oracle_n == set_oracle_n_opt[i]) break;
-        if (i == SET_ORACLE_N_N) set_oracle_n = 3;
+        if (i == SET_ORACLE_N_N) set_oracle_n = 0;
     }
     if (set_oracle_win >= SET_ORACLE_WIN_N) set_oracle_win = 0;
     if (set_vol > 100) set_vol = 100;
     set_beep = set_beep ? 1 : 0;
     set_shake = set_shake ? 1 : 0;
     set_shake_swap = set_shake_swap ? 1 : 0;
+    set_aod_clock = set_aod_clock ? 1 : 0;
     if (set_key_sound >= SET_KEY_SOUND_N) set_key_sound = 1;   /* 旧存储(蜂鸣/双)归入音频 */
     if (set_cursor >= UI_CURSOR_N) set_cursor = UI_CURSOR_DEFAULT;
     if (set_theme >= SET_THEME_N) set_theme = 0;
@@ -220,6 +223,15 @@ void SET_SetTimeout(uint16_t sec)
     settings_save();
 }
 
+/* 息屏时钟: 1=超时后显示大时钟 */
+uint8_t SET_AodClock(void) { return set_aod_clock; }
+
+void SET_SetAodClock(uint8_t on)
+{
+    set_aod_clock = on ? 1 : 0;
+    settings_save();
+}
+
 /* 神谕每日条数(WEB 配置用; 0=关) */
 void SET_SetOracleN(uint8_t n)
 {
@@ -256,21 +268,13 @@ static uint8_t settings_timeout_idx(void)
     return 1;
 }
 
-static uint8_t settings_oracle_n_idx(void)
-{
-    uint8_t i;
-    for (i = 0; i < SET_ORACLE_N_N; i++)
-    {
-        if (set_oracle_n_opt[i] == set_oracle_n) return i;
-    }
-    return 2;
-}
-
 static void settings_items_refresh(void)
 {
     uint8_t i;
     snprintf(settings_buf[SET_IDX_SCREEN], sizeof(settings_buf[0]),
              "息屏 %s", set_timeout_name[settings_timeout_idx()]);
+    snprintf(settings_buf[SET_IDX_AOD], sizeof(settings_buf[0]),
+             "息屏时钟 %s", set_aod_clock ? "开" : "关");
     snprintf(settings_buf[SET_IDX_VOL], sizeof(settings_buf[0]),
              "音量 %d", set_vol);
     snprintf(settings_buf[SET_IDX_BEEP], sizeof(settings_buf[0]),
@@ -281,10 +285,6 @@ static void settings_items_refresh(void)
              "摇动 %s", set_shake ? "开" : "关");
     snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
              "平衡互换 %s", set_shake_swap ? "开" : "关");
-    snprintf(settings_buf[SET_IDX_ORACLE_N], sizeof(settings_buf[0]),
-             "接收 %d条", set_oracle_n);
-    snprintf(settings_buf[SET_IDX_ORACLE_WIN], sizeof(settings_buf[0]),
-             "指令 %s", set_oracle_win_name[set_oracle_win]);
     snprintf(settings_buf[SET_IDX_INFO], sizeof(settings_buf[0]), "系统信息");
     snprintf(settings_buf[SET_IDX_RESET], sizeof(settings_buf[0]), "初始化");
     snprintf(settings_buf[SET_IDX_INS_FONT], sizeof(settings_buf[0]),
@@ -321,6 +321,14 @@ void SET_SubmenuSelect(uint8_t sel)
         snprintf(settings_buf[SET_IDX_SCREEN], sizeof(settings_buf[0]),
                  "息屏 %s", set_timeout_name[idx]);
         UI_SubMenuSetItem(SET_IDX_SCREEN, settings_buf[SET_IDX_SCREEN]);
+    }
+    else if (sel == SET_IDX_AOD)   /* 息屏时钟: 开/关 */
+    {
+        set_aod_clock = set_aod_clock ? 0 : 1;
+        settings_save();
+        snprintf(settings_buf[SET_IDX_AOD], sizeof(settings_buf[0]),
+                 "息屏时钟 %s", set_aod_clock ? "开" : "关");
+        UI_SubMenuSetItem(SET_IDX_AOD, settings_buf[SET_IDX_AOD]);
     }
     else if (sel == SET_IDX_VOL)   /* 音量: 循环档位 */
     {
@@ -371,23 +379,6 @@ void SET_SubmenuSelect(uint8_t sel)
         snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
                  "平衡互换 %s", set_shake_swap ? "开" : "关");
         UI_SubMenuSetItem(SET_IDX_SHAKE_SWAP, settings_buf[SET_IDX_SHAKE_SWAP]);
-    }
-    else if (sel == SET_IDX_ORACLE_N)   /* 神谕条数: 循环 */
-    {
-        uint8_t idx = (uint8_t)((settings_oracle_n_idx() + 1) % SET_ORACLE_N_N);
-        set_oracle_n = set_oracle_n_opt[idx];
-        settings_save();
-        snprintf(settings_buf[SET_IDX_ORACLE_N], sizeof(settings_buf[0]),
-                 "接收 %d条", set_oracle_n);
-        UI_SubMenuSetItem(SET_IDX_ORACLE_N, settings_buf[SET_IDX_ORACLE_N]);
-    }
-    else if (sel == SET_IDX_ORACLE_WIN)  /* 神谕时段: 循环 */
-    {
-        set_oracle_win = (uint8_t)((set_oracle_win + 1) % SET_ORACLE_WIN_N);
-        settings_save();
-        snprintf(settings_buf[SET_IDX_ORACLE_WIN], sizeof(settings_buf[0]),
-                 "指令 %s", set_oracle_win_name[set_oracle_win]);
-        UI_SubMenuSetItem(SET_IDX_ORACLE_WIN, settings_buf[SET_IDX_ORACLE_WIN]);
     }
     else if (sel == SET_IDX_INS_FONT)   /* 破译字号: 循环 16/24/32px(破译行数自动匹配) */
     {

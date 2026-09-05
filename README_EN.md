@@ -24,7 +24,7 @@ An ESP32-S3 firmware for a desktop **pager**-shaped personal terminal: 284×76 h
 | **Gacha** | Ten-pull / Single / Coin Battle / Codex / Score |
 | **Ask** | Answer book: answer / what to eat / drink / play (built-in + web-customized) |
 | **User** | Switch the active user (web can add); each user receives their own private instructions |
-| **Settings** | Volume/buzzer/key-sound; screen-off/theme (Soft Green/Cyber Cyan/Dark Gray/Standard B&W)/cursor/font; oracle/window; shake/balance-swap; system info, factory reset |
+| **Settings** | Volume/buzzer/key-sound; screen-off/AOD-clock/theme (Soft Green/Cyber Cyan/Dark Gray/Standard B&W)/cursor/font; shake/balance-swap; system info, factory reset |
 | *Loom (hidden)* | Easter egg unlocked by Konami gesture (Up Up Down Down Left Right Left Right): time acceleration, white-box filter, balance page |
 
 ### Highlights
