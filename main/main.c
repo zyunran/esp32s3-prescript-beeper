@@ -56,8 +56,8 @@
 /* 长按参数(改这里即可调整手感):
  *   LONG_PRESS_MS  = 判定"长按"的按住时长(超此即长按)
  *   REPEAT_PRESS_MS = 长按连发间隔(上下键按住后每隔此时间滚动一项) */
-#define LONG_PRESS_MS   600
-#define REPEAT_PRESS_MS 60
+#define LONG_PRESS_MS   400
+#define REPEAT_PRESS_MS 40
 
 /* 开启联网后, 超过此时长仍没连上则判定"未连上"并反馈 */
 #define NET_CONNECT_RESULT_MS  12000
@@ -82,9 +82,8 @@ static uint8_t  aod_active = 0;       /* 1=息屏时钟模式 */
 static uint8_t  aod_mode = 0;         /* 0=普通时钟 1=神谕64库信息 */
 static char     aod_oracle[INS_PRESET_LEN] = {0};
 static uint32_t aod_last_draw = 0;    /* AOD 重绘节流 */
+static uint32_t aod_auto_last = 0;    /* 息屏时钟自动重播乱码计时 */
 static uint8_t  aod_saved_font = 0xFF; /* 进入神谕64模式前保存的破译字号(0xFF=未保存) */
-static uint16_t aod_saved_garble = 0;  /* 时钟乱码期间临时覆盖的乱码色 */
-static uint8_t  aod_garble_overridden = 0;
 
 /* ================= 菜单返回栈 =================
  * 进入子页面/信息页/计时等之前压入当前屏幕, 返回时弹栈还原, 消除各处硬编码的"回哪"关系.
@@ -269,15 +268,6 @@ static void aod_oracle_pick(void)
     }
 }
 
-static void aod_restore_garble(void)
-{
-    if (aod_garble_overridden)
-    {
-        INS_SCR_GARBLE = aod_saved_garble;
-        aod_garble_overridden = 0;
-    }
-}
-
 static void aod_enter_64(void)
 {
     if (aod_saved_font == 0xFF)
@@ -303,25 +293,20 @@ static void aod_show_current(uint8_t glitch, uint8_t replay)
         if (glitch)
         {
             char clk[16];
-            /* 时钟乱码阶段也统一用文本色(默认蓝), 不出现红色乱码 */
-            aod_saved_garble = INS_SCR_GARBLE;
-            INS_SCR_GARBLE   = INS_SCR_DEFAULT;
-            aod_garble_overridden = 1;
             NET_TimeStrCopy(clk, sizeof(clk));
             aod_enter_64();
             INS_Show(clk);
         }
         else
         {
-            aod_restore_garble();
             aod_leave_64();
             aod_last_draw = (uint32_t)(esp_timer_get_time() / 1000);
+            aod_auto_last = aod_last_draw;
             aod_clock_draw();
         }
     }
     else
     {
-        aod_restore_garble();
         aod_enter_64();
         if (!replay || aod_oracle[0] == '\0') aod_oracle_pick();
         INS_Show(aod_oracle);
@@ -330,7 +315,6 @@ static void aod_show_current(uint8_t glitch, uint8_t replay)
 
 static void aod_exit(void)
 {
-    aod_restore_garble();
     aod_leave_64();
     aod_active = 0;
     if (aod_mode == 1) INS_Exit();   /* 内部已 UI_RenderScreen 回主界面 */
@@ -1082,7 +1066,6 @@ static void ui_task(void *arg)
                     }
                     else
                     {
-                        aod_restore_garble();
                         if (aod_saved_font != 0xFF)
                         {
                             INS_SetFont(aod_saved_font);
@@ -1092,6 +1075,13 @@ static void ui_task(void *arg)
                         {
                             aod_last_draw = now;
                             aod_clock_draw();
+                        }
+                        /* 网页可配置: 息屏时钟自动重新播放破译乱码的间隔(秒) */
+                        if (SET_AodAutoSec() > 0 &&
+                            now - aod_auto_last >= (uint32_t)SET_AodAutoSec() * 1000)
+                        {
+                            aod_auto_last = now;
+                            aod_show_current(1, 1);
                         }
                     }
                 }
