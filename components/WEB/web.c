@@ -313,6 +313,7 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddNumberToObject(root, "oracle_win", SET_OracleWin());
         cJSON_AddNumberToObject(root, "cursor", UI_GetCursorStyle());
         cJSON_AddNumberToObject(root, "theme", SET_Theme());
+        cJSON_AddNumberToObject(root, "shake_swap", SET_ShakeSwap());
         cJSON *status = cJSON_CreateObject();
         cJSON_AddNumberToObject(status, "wifi", NET_WifiOk() ? 1 : 0);
         {
@@ -653,6 +654,15 @@ static int web_apply_timeout(cJSON *root)
     return 1;
 }
 
+static int web_apply_shake_swap(cJSON *root)
+{
+    cJSON *v = cJSON_GetObjectItem(root, "shake_swap");
+    if (!v) return 1;
+    if (!cJSON_IsNumber(v) || (v->valueint != 0 && v->valueint != 1)) return 0;
+    SET_SetShakeSwap((uint8_t)v->valueint);
+    return 1;
+}
+
 static int web_apply_cursor(cJSON *root)
 {
     cJSON *cur = cJSON_GetObjectItem(root, "cursor");
@@ -856,6 +866,8 @@ static int web_cfg_validate(cJSON *root)
     if (ins64 && (!cJSON_IsString(ins64) || !web_ins_text_valid(ins64->valuestring))) return 0;
     cJSON *theme = cJSON_GetObjectItem(root, "theme");
     if (theme && (!cJSON_IsNumber(theme) || theme->valueint < 0 || theme->valueint >= THEME_PRESET_N)) return 0;
+    cJSON *shake_swap = cJSON_GetObjectItem(root, "shake_swap");
+    if (shake_swap && (!cJSON_IsNumber(shake_swap) || (shake_swap->valueint != 0 && shake_swap->valueint != 1))) return 0;
     cJSON *ota = cJSON_GetObjectItem(root, "ota");
     if (ota)
     {
@@ -947,7 +959,7 @@ static esp_err_t web_api_cfg_post(httpd_req_t *req)
     if (!web_apply_colors(root) || !web_apply_ins(root) || !web_apply_ans(root) ||
         !web_apply_alarms(root) ||
         !web_apply_net(root) || !web_apply_user(root) || !web_apply_sound(root) ||
-        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_key_sound(root) ||
+        !web_apply_timeout(root) || !web_apply_cursor(root) || !web_apply_shake_swap(root) || !web_apply_key_sound(root) ||
         !web_apply_theme(root) || !web_apply_ins64(root) || !web_apply_ota(root) || !web_apply_decode(root))
     {
         SET_SaveBatchEnd();   /* 失败也要收批: 已应用的 RAM 改动落盘(与旧"部分立即落库"行为一致) */

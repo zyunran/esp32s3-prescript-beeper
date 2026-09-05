@@ -283,8 +283,6 @@ static void settings_items_refresh(void)
              "按键音 %s", set_key_sound_name[set_key_sound]);
     snprintf(settings_buf[SET_IDX_SHAKE], sizeof(settings_buf[0]),
              "摇动 %s", set_shake ? "开" : "关");
-    snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
-             "平衡互换 %s", set_shake_swap ? "开" : "关");
     snprintf(settings_buf[SET_IDX_INFO], sizeof(settings_buf[0]), "系统信息");
     snprintf(settings_buf[SET_IDX_RESET], sizeof(settings_buf[0]), "初始化");
     snprintf(settings_buf[SET_IDX_INS_FONT], sizeof(settings_buf[0]),
@@ -370,15 +368,6 @@ void SET_SubmenuSelect(uint8_t sel)
         snprintf(settings_buf[SET_IDX_SHAKE], sizeof(settings_buf[0]),
                  "摇动 %s", set_shake ? "开" : "关");
         UI_SubMenuSetItem(SET_IDX_SHAKE, settings_buf[SET_IDX_SHAKE]);
-    }
-    else if (sel == SET_IDX_SHAKE_SWAP)   /* 陀螺仪互换: 上/下 + 左/右 调换 */
-    {
-        set_shake_swap = set_shake_swap ? 0 : 1;
-        MPU_SetShakeSwap(set_shake_swap);
-        settings_save();
-        snprintf(settings_buf[SET_IDX_SHAKE_SWAP], sizeof(settings_buf[0]),
-                 "平衡互换 %s", set_shake_swap ? "开" : "关");
-        UI_SubMenuSetItem(SET_IDX_SHAKE_SWAP, settings_buf[SET_IDX_SHAKE_SWAP]);
     }
     else if (sel == SET_IDX_INS_FONT)   /* 破译字号: 循环 16/24/32px(破译行数自动匹配) */
     {

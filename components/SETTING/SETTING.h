@@ -15,7 +15,6 @@ typedef enum {
     SET_IDX_CURSOR,        /* 光标样式 */
     SET_IDX_INS_FONT,      /* 破译字号 */
     SET_IDX_SHAKE,         /* 摇动翻页开/关 */
-    SET_IDX_SHAKE_SWAP,    /* 平衡互换: 摇动上下/左右方向调换 */
     SET_IDX_INFO,          /* 系统信息 */
     SET_IDX_RESET,         /* 初始化 */
     SET_IDX_EXIT,          /* 退出 */
@@ -23,7 +22,7 @@ typedef enum {
 } setting_idx_t;
 
 /* SETTING 组件: 设置(NVS 持久化) + 设置子菜单交互
- *  - 值: 熄屏时长/息屏时钟/音量/蜂鸣开关/摇动开关/陀螺仪互换/光标样式
+ *  - 值: 熄屏时长/息屏时钟/音量/蜂鸣开关/摇动开关/光标样式
  *  - 副作用在修改时立即应用(蜂鸣开关/音量/摇动开关/陀螺仪互换)
  *  - 设置子菜单由 UI 主任务驱动: Enter 生成项 -> Select 处理选中 */
 
@@ -44,6 +43,8 @@ uint32_t SET_BootCount(void);              /* 开机次数(NVS) */
 void SET_SetVol(uint8_t v);                /* 设音量并保存(WEB配置用) */
 void SET_SetBeep(uint8_t on);              /* 设蜂鸣开关并保存(WEB配置用) */
 void SET_SetShake(uint8_t on);             /* 设摇动开关并保存 */
+uint8_t  SET_ShakeSwap(void);                  /* 平衡互换: 0=默认 1=上下/左右调换 */
+void     SET_SetShakeSwap(uint8_t on);         /* 设平衡互换并保存 */
 void SET_SetTimeout(uint16_t sec);         /* 设熄屏秒数并保存(0=永不) */
 void SET_SetOracleN(uint8_t n);            /* 设神谕条数并保存 */
 void SET_SetOracleWin(uint8_t idx);        /* 设神谕时段索引并保存 */

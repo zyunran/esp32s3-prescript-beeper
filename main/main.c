@@ -239,6 +239,7 @@ static void aod_clock_draw(uint8_t glitch)
     uint16_t x, total;
     int16_t y;
     const char *p;
+    uint16_t fc;
 
     NET_TimeStrCopy(clk, sizeof(clk));
     UI_ScrClear(UI_COLOR_BG);
@@ -249,11 +250,12 @@ static void aod_clock_draw(uint8_t glitch)
     for (p = clk; *p; p++)
     {
         ch[0] = *p;
-        if (glitch && *p != ':')
+        if (glitch)                            /* 乱码阶段: 冒号也随机闪 */
         {
             ch[0] = set[esp_random() % (sizeof(set) - 1)];
         }
-        x += UI_ScrGlyphF(x, y, ch, 64, UI_COLOR_TIME, UI_COLOR_BG);
+        fc = glitch ? INS_SCR_GARBLE : INS_SCR_DEFAULT;   /* 颜色跟随破译参数 */
+        x += UI_ScrGlyphF(x, y, ch, 64, fc, UI_COLOR_BG);
     }
     UI_ScrBlit();
 }
@@ -323,7 +325,7 @@ static void aod_handle_key(uint8_t evt, uint32_t now)
         if (aod_mode == 0)
         {
             aod_last_draw = now;
-            aod_glitch_until = now + 300;
+            aod_glitch_until = now + (uint32_t)INS_SCR_FRAMES * INS_SCR_DELAY_MS;
             aod_clock_draw(1);
         }
         else if (aod_oracle[0])
@@ -1061,7 +1063,7 @@ static void ui_task(void *arg)
                 {
                     if (now < aod_glitch_until)
                     {
-                        if (now - aod_last_draw >= 40)
+                        if (now - aod_last_draw >= INS_SCR_DELAY_MS)
                         {
                             aod_last_draw = now;
                             aod_clock_draw(1);
