@@ -76,6 +76,7 @@ static uint8_t al_mode;         /* 重复模式(0=每天 1=工作日 2=周末 3=
 static uint8_t al_menu_sel;     /* 右侧菜单选中: 0=确认 1=重试 2=退出 */
 static int16_t al_slide_hh, al_slide_mm, al_slide_mode;  /* 改值滑动偏移(从 8 归 0) */
 static uint32_t al_slide_last;
+static uint8_t al_full_msg = 0;   /* 1=正在显示"闹钟已满"提示(任意键返回设定屏, 已填时/分/模式保留) */
 
 /* 二级菜单项 */
 static const char *alm_menu_items[] = { "添加闹钟", "当前闹钟", "退出" };
@@ -265,9 +266,10 @@ static void alm_setup_enter(void)
 }
 
 /* 保存当前设定值到闹钟槽: 首选"从未设置"槽(days==0, 与网页找槽语义一致),
- * 次选已禁用槽(复用, 不挤占开启中的), 全满才覆盖第 0 个.
+ * 次选已禁用槽(复用, 不挤占开启中的), 全满则放弃保存并返回 0(由调用方提示;
+ * 旧实现静默覆盖第 0 个槽, 会无声丢掉用户最早设置的闹钟).
  * 旧实现只看 en==0: 16 槽里有禁用闹钟时, 新增会静默覆盖它而放着真空槽不用 */
-static void alm_add_save(void)
+static uint8_t alm_add_save(void)
 {
     uint8_t i, slot = ALM_MAX;
     alm_lock();   /* 找槽+写入原子, 防与网页 SetSlot 并发选重槽/撕裂 */
@@ -282,7 +284,11 @@ static void alm_add_save(void)
             if (!alm[i].en) { slot = i; break; }     /* 已禁用: 次选复用 */
         }
     }
-    if (slot >= ALM_MAX) slot = 0;                   /* 全满: 覆盖第 0 个 */
+    if (slot >= ALM_MAX)   /* 16 槽全满: 不覆盖, 交调用方提示 */
+    {
+        alm_unlock();
+        return 0;
+    }
     alm[slot].en = 1;
     alm[slot].hh = al_hh;
     alm[slot].mm = al_mm;
@@ -291,6 +297,7 @@ static void alm_add_save(void)
     alm[slot].lastday = 0;
     alm_save();
     alm_unlock();
+    return 1;
 }
 
 /* ================= 当前闹钟列表 =================
@@ -463,6 +470,7 @@ void ALM_ClearSlot(uint8_t i)
 void ALM_Enter(void)
 {
     alm_busy = 1;
+    al_full_msg = 0;   /* 清残留: 提示屏期间被闹钟/神谕打断后重进, 防首键被吞且错绘设定屏 */
     alm_menu_enter();
 }
 
@@ -470,6 +478,12 @@ void ALM_Key(uint8_t up, uint8_t ok, uint8_t down, uint8_t lng)
 {
     if (!alm_busy)
     {
+        return;
+    }
+    if (al_full_msg)   /* "闹钟已满"提示屏: 任意键返回设定屏(已填时/分/模式保留) */
+    {
+        al_full_msg = 0;
+        alm_render_setup();
         return;
     }
     switch (alm_ph)
@@ -519,7 +533,15 @@ void ALM_Key(uint8_t up, uint8_t ok, uint8_t down, uint8_t lng)
                 if (al_cur == 0) { al_cur = 1; alm_render_setup(); }        /* 光标: 时 -> 分 */
                 else if (al_cur == 1) { al_cur = 2; alm_render_setup(); }   /* 分 -> 重复 */
                 else if (al_cur == 2) { al_cur = 3; alm_render_setup(); }   /* 重复 -> 右侧菜单 */
-                else if (al_menu_sel == 0) { alm_add_save(); alm_menu_enter(); } /* 确认保存 -> 回二级菜单 */
+                else if (al_menu_sel == 0)
+                {
+                    if (alm_add_save()) alm_menu_enter();   /* 确认保存 -> 回二级菜单 */
+                    else
+                    {
+                        al_full_msg = 1;   /* 16 槽全满: 提示后任意键回设定屏, 不覆盖已有闹钟 */
+                        UI_FullScreen("闹钟已满", "先删除一个再添加");
+                    }
+                }
                 else if (al_menu_sel == 1) { al_cur = 0; alm_render_setup(); }   /* 重试 -> 回时重新设定 */
                 else alm_menu_enter();                                   /* 退出: 放弃 -> 回二级菜单 */
             }
@@ -538,7 +560,7 @@ void ALM_Tick(void)
 {
     uint32_t now;
     uint8_t chg = 0;
-    if (!alm_busy || alm_ph != AL_SETUP)
+    if (!alm_busy || alm_ph != AL_SETUP || al_full_msg)   /* 提示屏期间冻结滑动动画, 防 alm_render_setup 覆盖提示 */
     {
         return;
     }

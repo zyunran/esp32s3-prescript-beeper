@@ -7,8 +7,11 @@
 #include "LCD.h"
 #include "esp_timer.h"
 #include "esp_sleep.h"
+#include "esp_log.h"
 #include "freertos/task.h"
 #include <stdio.h>
+
+static const char *TAG = "PWR";
 
 #define STANDBY_TICK_US  50000ULL /* 定时唤醒片长 50ms(按键响应≤50ms, 与功耗折中) */
 
@@ -46,7 +49,7 @@ uint8_t PWR_StandbyAllowed(uint32_t now_ms)
 void PWR_StandbyEnter(void)
 {
     uint8_t alarm = 0;
-    printf("[STBY] enter\n");
+    ESP_LOGD(TAG, "standby enter");   /* 每次进出都打: 降为 DEBUG 级, 量产日志不刷屏 */
     if (h.on_enter) h.on_enter();                  /* 断网等宿主收尾 */
     if (h.input_task) vTaskSuspend(h.input_task);  /* 挂起按键轮询: 否则 20ms 轮询持续唤醒 CPU 削省电;
                                                     * 唤醒判断改由睡眠片直接查 GPIO(cb), 不影响响应 */
@@ -63,7 +66,7 @@ void PWR_StandbyEnter(void)
     }
     if (h.sensor_resume) h.sensor_resume();
     if (h.input_task) vTaskResume(h.input_task);   /* 唤醒键按下沿在恢复后入队(长按从按下时刻起算) */
-    printf("[STBY] wake %s\n", alarm ? "alarm" : "btn");
+    ESP_LOGD(TAG, "standby wake %s", alarm ? "alarm" : "btn");
     {   uint32_t now = pw_now();
         if (!alarm) standby_reenter_at = now + 400;   /* 按键唤醒冷却 400ms */
         if (alarm && h.on_alarm_wake) h.on_alarm_wake();

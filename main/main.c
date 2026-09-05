@@ -325,8 +325,17 @@ static void aod_exit(void)
 {
     aod_leave_64();
     aod_active = 0;
-    if (aod_mode == 1 || INS_Decoding()) INS_Exit();   /* 破译中需要先停止 */
+    if (aod_mode == 1 || INS_Decoding()) INS_Exit();   /* 破译中需要先停止(内部重绘主界面) */
     else UI_RenderScreen();
+    if (ui_state == ST_SUB) UI_SubMenuSetCur(UI_SubMenuCur());   /* 从子菜单进入的: 恢复子菜单画面(UI_RenderScreen 只绘主界面) */
+}
+
+/* 推送类(每日签/神谕/闹钟/待办提醒/联网结果)打断 AOD: 完整退出并恢复被打断前的界面.
+ * 直接清 aod_active 会残留两处问题: 64px 破译字号(aod_enter_64 已改全局 ins_font)
+ * 与 AOD 时钟底图不被清除, 之后 INS_Show 的画面会被 aod_clock_draw 每秒覆盖 */
+static void aod_interrupt(void)
+{
+    if (aod_active) aod_exit();
 }
 
 static void aod_handle_key(uint8_t evt, uint32_t now)
@@ -442,7 +451,7 @@ static void input_task(void *arg)
 }
 
 /* ================= 事件处理(按当前界面状态) ================= */
-/* 按键音: 根据设置播放蜂鸣/短音频(0=关 1=蜂鸣 2=音频 3=双) */
+/* 按键音: 按设置播放短音频(扬声器); 仅两档 0=关 1=音频(旧"蜂鸣/双"档已废除, 见 SETTING.c) */
 static void play_key_sound(uint8_t evt)
 {
     uint8_t mode = SET_KeySound();
@@ -892,10 +901,13 @@ static void ui_task(void *arg)
         /* 网页下发的指令 -> 乱码破译显示 */
         {
             static char wcmd[96];
-            if (WEB_TakeCmd(wcmd, sizeof(wcmd)))
+            /* 确认初始化/OTA信息页占用 ST_INFO 专属语义: 此时注入指令会覆盖屏幕
+             * (确认页的 OK 会被误当成"确认清空NVS"直接擦除), 故丢弃本次指令(单槽缓冲, 后到覆盖旧指令) */
+            if (WEB_TakeCmd(wcmd, sizeof(wcmd)) && !reset_pending && !ota_info_active)
             {
                 if (strcasecmp(wcmd, "made in heaven") == 0)   /* 彩蛋指令: 切换时间加速 */
                 {
+                    if (aod_active) aod_exit();   /* AOD 中注入: 先退 AOD 恢复底图, 防时钟重绘覆盖破译画面 */
                     LOOM_TimeToggle();
                     ui_to_main();                /* 彩蛋确认播完自动回主界面看时间加速 */
                     INS_Show(LOOM_TimeOn() ? "MADE IN\nHEAVEN" : "时间恢复");
@@ -904,6 +916,7 @@ static void ui_task(void *arg)
                 }
                 else
                 {
+                    if (aod_active) aod_exit();   /* AOD 中注入: 同上 */
                     if (ui_state != ST_INS && ui_state != ST_INFO)
                     {
                         if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
@@ -918,10 +931,12 @@ static void ui_task(void *arg)
         /* 云端下发的指令(OneNET display_cmd) -> 与网页指令同一乱码破译路径(含彩蛋同待遇) */
         {
             static char ccmd[CLOUD_CMD_MAX];
-            if (CLOUD_TakeCmd(ccmd, sizeof(ccmd)))
+            /* 与网页指令同守卫: 确认初始化/OTA信息页不注入(防覆盖屏幕/误触清NVS) */
+            if (CLOUD_TakeCmd(ccmd, sizeof(ccmd)) && !reset_pending && !ota_info_active)
             {
                 if (strcasecmp(ccmd, "made in heaven") == 0)
                 {
+                    if (aod_active) aod_exit();   /* AOD 中注入: 先退 AOD 恢复底图 */
                     LOOM_TimeToggle();
                     ui_to_main();                /* 彩蛋确认播完自动回主界面看时间加速 */
                     INS_Show(LOOM_TimeOn() ? "MADE IN\nHEAVEN" : "时间恢复");
@@ -930,6 +945,7 @@ static void ui_task(void *arg)
                 }
                 else
                 {
+                    if (aod_active) aod_exit();   /* AOD 中注入: 同上 */
                     if (ui_state != ST_INS && ui_state != ST_INFO)
                     {
                         if (ui_state != ST_MAIN && ui_state != ST_SUB) ui_to_main();   /* 计时/闹钟/抽卡/询问/平衡页先回主界面: 防退出后画面与状态错位 */
@@ -954,6 +970,7 @@ static void ui_task(void *arg)
                 {
                     strncpy(daily_last, dd, sizeof(daily_last) - 1);
                     daily_last[sizeof(daily_last) - 1] = '\0';
+                    aod_interrupt();     /* AOD 中触发: 先退 AOD, 防时钟重绘覆盖每日签(与神谕/闹钟/待办同待遇) */
                     ORACLE_DsignInc();   /* 每日签计数(已收拢至 ORACLE 组件) */
                     CLOUD_NotifyEvent(CLOUD_EVT_DAILY, NULL);   /* 云端事件: 每日神谕已推送 */
                     INS_BeepNext(1);   /* 每日签: 结尾三连急促蜂鸣 */
@@ -968,6 +985,7 @@ static void ui_task(void *arg)
                 if (NET_WifiOk())
                 {
                     net_conn_pending = 0;
+                    aod_interrupt();   /* AOD 中弹结果: 先退 AOD 防时钟覆盖"已连接" */
                     if (ui_state != ST_INS)
                     {
                         if (ui_state != ST_MAIN && ui_state != ST_SUB && ui_state != ST_INFO) ui_to_main();
@@ -979,6 +997,7 @@ static void ui_task(void *arg)
                 else if ((int32_t)(now - net_conn_deadline) >= 0)   /* 差比较: 防 uptime 49.7d 回绕误判超时 */
                 {
                     net_conn_pending = 0;
+                    aod_interrupt();   /* AOD 中弹结果: 同上 */
                     if (ui_state != ST_INS)
                     {
                         if (ui_state != ST_MAIN && ui_state != ST_SUB && ui_state != ST_INFO) ui_to_main();
@@ -990,7 +1009,7 @@ static void ui_task(void *arg)
             }
             if (ORACLE_Due())
             {
-                if (aod_active) aod_active = 0;
+                aod_interrupt();   /* 打断 AOD: 清状态+复原字号+重绘底图 */
                 ORACLE_Delivered();
                 if (ui_state == ST_MAIN)
                 {
@@ -1002,7 +1021,7 @@ static void ui_task(void *arg)
             }
             if (ALM_Check())       /* 有闹钟到点(已在 ALM 内标记当日触发): 任意界面都打断显示 */
             {
-                if (aod_active) aod_active = 0;
+                aod_interrupt();   /* 打断 AOD: 同上(直接清标志会残留 64px 字号) */
                 CLOUD_NotifyEvent(CLOUD_EVT_ALARM, NULL);   /* 云端事件: 闹钟到点(累计计数在 CLOUD 内) */
                 ui_to_main();      /* 与待机闹钟唤醒一致: 先回主界面再显示闹钟指令 */
                 ALM_Show();        /* 闹钟专属指令乱码破译 */
@@ -1011,7 +1030,7 @@ static void ui_task(void *arg)
             }
             if (TODO_RemindDue())  /* 有待办提醒到点: 亮屏+蜂鸣+乱码显示待办 */
             {
-                if (aod_active) aod_active = 0;
+                aod_interrupt();   /* 打断 AOD: 同上 */
                 CLOUD_NotifyEvent(CLOUD_EVT_TODO, TODO_RemindText());   /* 云端事件: 待办提醒(msg=待办文本) */
                 ui_to_main();
                 INS_BeepNext(1);   /* 待办提醒: 结尾三连急促蜂鸣(与破译完成对齐, 替代旧的独立三响) */
@@ -1244,7 +1263,9 @@ static void ui_task(void *arg)
                 if (SET_TimeoutSec() > 0 && !ota_drv_busy() &&
                     (now - PWR_LastAct() >= (uint32_t)SET_TimeoutSec() * 1000))
                 {
-                    if (SET_AodClock())
+                    /* AOD 仅在主界面/子菜单启用: 倒计时/抽卡/破译等活动页面的 Tick 也在重绘,
+                     * 叠加 AOD 时钟会互相覆盖, 这些页面息屏只关背光(render=0 时状态照常推进) */
+                    if (SET_AodClock() && (ui_state == ST_MAIN || ui_state == ST_SUB))
                     {
                         aod_active = 1;
                         aod_mode = 0;

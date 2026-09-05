@@ -8,7 +8,7 @@
 typedef enum {
     SET_IDX_VOL = 0,       /* 音量 */
     SET_IDX_BEEP,          /* 蜂鸣器开/关 */
-    SET_IDX_KEY,           /* 按键音: 关/蜂鸣/音频/双 */
+    SET_IDX_KEY,           /* 按键音: 关/音频(扬声器), 仅两档(旧"蜂鸣/双"档已废除) */
     SET_IDX_SCREEN,        /* 息屏时长 */
     SET_IDX_AOD,           /* 息屏时钟 开/关 */
     SET_IDX_THEME,         /* 主题预设: 柔和绿/赛博青/深夜黑/标准黑白 */

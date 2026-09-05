@@ -203,6 +203,10 @@ static void ins_glyph_put(uint16_t color, const char *ch, uint8_t w)
     {
         return;
     }
+    if (ins_p_col >= INS_GLYPH_MAX)   /* 列上限防御: 行宽换行已隐式保证(16px 最多34列), 显式钳位防未来字宽/屏宽调整越界 */
+    {
+        return;
+    }
     ins_gl[ins_p_line][ins_p_col].color = color;
     strncpy(ins_gl[ins_p_line][ins_p_col].ch, ch, 3);
     ins_gl[ins_p_line][ins_p_col].ch[3] = '\0';

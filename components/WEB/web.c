@@ -58,7 +58,7 @@ static char web_token[17] = "";
 static uint8_t web_token_ok(httpd_req_t *req)
 {
     char hdr[40];
-    if (web_token[0] == '\0') return 1;   /* 未生成(不应发生): 放行, 不因防护引入全拒 */
+    if (web_token[0] == '\0') return 0;   /* 未生成(WEB_Init 启动 httpd 前必生成, 正常不可达): 拒绝 —— 失败封闭, 防未来初始化顺序改动静默失去防护 */
     if (httpd_req_get_hdr_value_str(req, "X-Web-Token", hdr, sizeof(hdr)) != ESP_OK) return 0;
     return strcmp(hdr, web_token) == 0;
 }
@@ -297,7 +297,13 @@ static esp_err_t web_api_cfg_get(httpd_req_t *req)
         cJSON_AddItemToObject(root, "wifi", wifi);
         cJSON_AddStringToObject(root, "city", NET_GetCity());
         cJSON_AddStringToObject(root, "key", (NET_GetKey()[0]) ? WEB_SECRET_MASK : "");
-        cJSON_AddStringToObject(root, "user", INS_UserName());
+        {
+            /* 快照拷贝: INS_UserName 复用单快照缓冲, 防 httpd 与 ui_task 并发调用时读到被对方覆盖的串 */
+            char userbuf[INS_USER_NAME_MAX];
+            strncpy(userbuf, INS_UserName(), sizeof(userbuf) - 1);
+            userbuf[sizeof(userbuf) - 1] = '\0';
+            cJSON_AddStringToObject(root, "user", userbuf);
+        }
         {
             /* 使用者列表(与设备端子菜单一致, 网页下拉选择) */
             uint8_t un = 0, k;
@@ -1010,9 +1016,11 @@ static int8_t scan_rssi[WEB_SCAN_MAX];
 static uint8_t scan_enc[WEB_SCAN_MAX];
 static uint8_t scan_n = 0;
 static volatile uint8_t scan_busy = 0;   /* httpd 任务置 1 启动, 扫描任务写完结果后清 0 */
+static volatile uint32_t scan_gen = 0;   /* 结果代次: 扫描任务开写前 +1; 读侧前后比对, 防读到被新一轮扫描覆写到一半的缓冲 */
 
 static void web_scan_task(void *arg)
 {
+    scan_gen++;   /* 先换代再写: 读侧据此识别撕裂快照 */
     scan_n = NET_ScanWifi(WEB_SCAN_MAX, scan_ssids, scan_rssi, scan_enc);
     scan_busy = 0;   /* 结果全部写完才清: 读侧以 busy=0 为快照完成信号 */
     vTaskDelete(NULL);
@@ -1051,15 +1059,31 @@ static esp_err_t web_api_scanres(httpd_req_t *req)
     }
     else
     {
-        cJSON *arr = cJSON_AddArrayToObject(root, "wifi_list");
-        uint8_t i;
-        for (i = 0; i < scan_n; i++)
+        /* 快照 + 换代校验: 快照期间被新一轮扫描覆写(代次变化)则按"扫描中"返回, 页面重试即可 */
+        uint32_t g1 = scan_gen;
+        char snap_ssid[WEB_SCAN_MAX][33];
+        int8_t snap_rssi[WEB_SCAN_MAX];
+        uint8_t snap_enc[WEB_SCAN_MAX];
+        uint8_t snap_n = scan_n, i;
+        memcpy(snap_ssid, scan_ssids, sizeof(snap_ssid));
+        memcpy(snap_rssi, scan_rssi, sizeof(snap_rssi));
+        memcpy(snap_enc, scan_enc, sizeof(snap_enc));
+        if (snap_n > WEB_SCAN_MAX) snap_n = WEB_SCAN_MAX;
+        if (g1 == scan_gen)
         {
-            cJSON *w = cJSON_CreateObject();
-            cJSON_AddStringToObject(w, "ssid", scan_ssids[i]);
-            cJSON_AddNumberToObject(w, "rssi", scan_rssi[i]);
-            cJSON_AddNumberToObject(w, "encrypted", scan_enc[i]);
-            cJSON_AddItemToArray(arr, w);
+            cJSON *arr = cJSON_AddArrayToObject(root, "wifi_list");
+            for (i = 0; i < snap_n; i++)
+            {
+                cJSON *w = cJSON_CreateObject();
+                cJSON_AddStringToObject(w, "ssid", snap_ssid[i]);
+                cJSON_AddNumberToObject(w, "rssi", snap_rssi[i]);
+                cJSON_AddNumberToObject(w, "encrypted", snap_enc[i]);
+                cJSON_AddItemToArray(arr, w);
+            }
+        }
+        else
+        {
+            cJSON_AddNumberToObject(root, "busy", 1);
         }
     }
     char *out = cJSON_PrintUnformatted(root);

@@ -125,7 +125,7 @@ static void net_ap_timeout_task(void *arg)
             net_ap_timeout_task_run = 0;
             break;
         }
-        wifi_mode_t mode;
+        wifi_mode_t mode = WIFI_MODE_NULL;   /* 防御初始化: get_mode 失败时不读未初始化值 */
         esp_wifi_get_mode(&mode);
         if (mode != WIFI_MODE_APSTA)
         {
@@ -410,7 +410,7 @@ uint8_t NET_ApOn(void)
 /* 开启配网: 手动开/关配网热点(纯 STA <-> AP+STA), 返回 1=已开 0=已关 */
 uint8_t NET_ApToggle(void)
 {
-    wifi_mode_t mode;
+    wifi_mode_t mode = WIFI_MODE_NULL;   /* 防御初始化: get_mode 失败时不读未初始化值 */
     esp_wifi_get_mode(&mode);
     if (mode == WIFI_MODE_APSTA)
     {
@@ -477,6 +477,13 @@ static void net_reconnect_task(void *arg)
  * 不重启射频 —— 保证网页"保存"响应先发出去(重启射频会掐掉负责本请求的链路). */
 void NET_SetWifi(const char *ssid, const char *pass)
 {
+    /* 网页每次「保存到设备」都会带着 WiFi 字段进来(密码为掩码=沿用旧值):
+     * ssid/pass 均未变化时直接返回 —— 否则改个颜色/闹钟保存一次就断连重连一次
+     * (重连会触发 GOT_IP 重拉天气, 云端 MQTT 也随之掉线一次) */
+    if (strcmp(net_ssid, ssid) == 0 && strcmp(net_pass, pass) == 0)
+    {
+        return;
+    }
     strncpy(net_ssid, ssid, sizeof(net_ssid) - 1);
     net_ssid[sizeof(net_ssid) - 1] = '\0';
     strncpy(net_pass, pass, sizeof(net_pass) - 1);
@@ -505,7 +512,7 @@ void NET_SetWifi(const char *ssid, const char *pass)
 static void net_clearwifi_task(void *arg)
 {
     vTaskDelay(600 / portTICK_PERIOD_MS);   /* 延迟: 让响应送达浏览器, 避免射频操作掐断本请求 */
-    wifi_mode_t mode;
+    wifi_mode_t mode = WIFI_MODE_NULL;   /* 防御初始化: get_mode 失败时不读未初始化值 */
     esp_wifi_get_mode(&mode);
     if (mode == WIFI_MODE_APSTA)            /* 先归位纯 STA(否则 NET_ApToggle 会误判为"关热点") */
     {

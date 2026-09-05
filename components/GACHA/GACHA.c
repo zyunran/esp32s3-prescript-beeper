@@ -810,6 +810,9 @@ static void cbm_battle_start(void)
 {
     cbm_me_c = coin_skills[cbm_me].coins;
     cbm_op_c = coin_skills[cbm_op].coins;
+    /* 钳位到翻转面缓冲 cbm_*_f[9] 容量: 数据表硬币数须 ≤9, 超限条目按 9 枚开局(防越界写) */
+    if (cbm_me_c > 9) cbm_me_c = 9;
+    if (cbm_op_c > 9) cbm_op_c = 9;
     cbm_round = 0;
     cbm_done = 0;
     cbm_last_res = 0;
@@ -1215,7 +1218,7 @@ static void gacha_points_pull(void)
 /* 显示积分页(乱码破译格式: 当前/累计积分/最大伤害/连胜), 任意键返回子菜单 */
 static void gacha_score_show(void)
 {
-    char buf[64];
+    char buf[112];   /* 5 个数值均可能到 10 位: 理论最长约 106B, 64 会截断"最高"字段 */
     coin_score_ensure();
     snprintf(buf, sizeof(buf), "当前积分 %d 累计 %d\n最大伤害 %d\n连胜 %d 最高 %d",
              (int)coin_score_cur, (int)coin_score_total, (int)coin_score_max,
