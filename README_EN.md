@@ -136,3 +136,7 @@ Artifact: `build/oder.bin` (~1.6 MB).
 1. Main menu **Network → AP**: hotspot `ESP32ODERAP` starts (random password shown on screen).
 2. Join it from a phone → the config page **pops up automatically** (captive portal), or open `http://192.168.4.1/`.
 3. Scan & save your WiFi, set weather city and **weather API key (Seniverse)**; the device switches to station mode.
+
+## License
+
+Code released under the [MIT License](LICENSE).

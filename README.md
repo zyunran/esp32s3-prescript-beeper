@@ -142,3 +142,7 @@ python -m esptool --chip esp32s3 -p COM9 -b 460800 --before default_reset --afte
 1. **本项目目前只用面包板与模块实现以上功能但是不完善,正在更新pcb版**
 
 >  **隐私**：本仓库不内置任何个人 WiFi SSID/密码或天气 API Key——首次须经配置页填写（或写入设备 NVS `net` 命名空间），源码默认留空。
+
+## 许可证
+
+代码以 [MIT](LICENSE) 协议开源。
