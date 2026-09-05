@@ -81,7 +81,6 @@ static uint32_t ota_ui_last = 0;      /* OTA 信息页重绘节流 */
 static uint8_t  aod_active = 0;       /* 1=息屏时钟模式 */
 static uint8_t  aod_mode = 0;         /* 0=普通时钟 1=神谕64库信息 */
 static char     aod_oracle[INS_PRESET_LEN] = {0};
-static uint32_t aod_glitch_until = 0; /* 普通时钟乱码重播截止时刻 */
 static uint32_t aod_last_draw = 0;    /* AOD 重绘节流 */
 static uint8_t  aod_saved_font = 0xFF; /* 进入神谕64模式前保存的破译字号(0xFF=未保存) */
 
@@ -231,15 +230,13 @@ static void show_ip_screen(void)
 
 
 /* ================= 息屏时钟(AOD) 绘制/交互 ================= */
-static void aod_clock_draw(uint8_t glitch)
+static void aod_clock_draw(void)
 {
-    static const char set[] = "0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     char clk[12];
     char ch[2] = {0, 0};
     uint16_t x, total;
     int16_t y;
     const char *p;
-    uint16_t fc;
 
     NET_TimeStrCopy(clk, sizeof(clk));
     UI_ScrClear(UI_COLOR_BG);
@@ -250,12 +247,7 @@ static void aod_clock_draw(uint8_t glitch)
     for (p = clk; *p; p++)
     {
         ch[0] = *p;
-        if (glitch)                            /* 乱码阶段: 冒号也随机闪 */
-        {
-            ch[0] = set[esp_random() % (sizeof(set) - 1)];
-        }
-        fc = glitch ? INS_SCR_GARBLE : INS_SCR_DEFAULT;   /* 颜色跟随破译参数 */
-        x += UI_ScrGlyphF(x, y, ch, 64, fc, UI_COLOR_BG);
+        x += UI_ScrGlyphF(x, y, ch, 64, INS_SCR_GARBLE, UI_COLOR_BG);
     }
     UI_ScrBlit();
 }
@@ -275,27 +267,45 @@ static void aod_oracle_pick(void)
     }
 }
 
-static void aod_show_current(uint8_t replay)
+static void aod_enter_64(void)
+{
+    if (aod_saved_font == 0xFF)
+    {
+        aod_saved_font = INS_Font();
+        if (aod_saved_font != 3) INS_SetFont(3);
+    }
+}
+
+static void aod_leave_64(void)
+{
+    if (aod_saved_font != 0xFF)
+    {
+        INS_SetFont(aod_saved_font);
+        aod_saved_font = 0xFF;
+    }
+}
+
+static void aod_show_current(uint8_t glitch, uint8_t replay)
 {
     if (aod_mode == 0)
     {
-        if (aod_saved_font != 0xFF)   /* 从神谕64退出到普通时钟: 恢复原破译字号 */
+        if (glitch)
         {
-            INS_SetFont(aod_saved_font);
-            aod_saved_font = 0xFF;
+            char clk[16];
+            NET_TimeStrCopy(clk, sizeof(clk));
+            aod_enter_64();
+            INS_Show(clk);
         }
-        aod_last_draw = (uint32_t)(esp_timer_get_time() / 1000);
-        aod_glitch_until = 0;
-        aod_clock_draw(0);
+        else
+        {
+            aod_leave_64();
+            aod_last_draw = (uint32_t)(esp_timer_get_time() / 1000);
+            aod_clock_draw();
+        }
     }
     else
     {
-        /* 神谕信息固定使用 64px 大字专用库 */
-        if (aod_saved_font == 0xFF)
-        {
-            aod_saved_font = INS_Font();
-            if (aod_saved_font != 3) INS_SetFont(3);
-        }
+        aod_enter_64();
         if (!replay || aod_oracle[0] == '\0') aod_oracle_pick();
         INS_Show(aod_oracle);
     }
@@ -303,11 +313,7 @@ static void aod_show_current(uint8_t replay)
 
 static void aod_exit(void)
 {
-    if (aod_saved_font != 0xFF)
-    {
-        INS_SetFont(aod_saved_font);
-        aod_saved_font = 0xFF;
-    }
+    aod_leave_64();
     aod_active = 0;
     if (aod_mode == 1) INS_Exit();   /* 内部已 UI_RenderScreen 回主界面 */
     else UI_RenderScreen();
@@ -318,20 +324,11 @@ static void aod_handle_key(uint8_t evt, uint32_t now)
     if (evt == EVT_UP || evt == EVT_DOWN)
     {
         aod_mode = !aod_mode;
-        aod_show_current(0);
+        aod_show_current(1, 0);      /* 左右/上下切换也要乱码过渡 */
     }
     else if (evt == EVT_OK)
     {
-        if (aod_mode == 0)
-        {
-            aod_last_draw = now;
-            aod_glitch_until = now + (uint32_t)INS_SCR_FRAMES * INS_SCR_DELAY_MS;
-            aod_clock_draw(1);
-        }
-        else if (aod_oracle[0])
-        {
-            INS_Show(aod_oracle);
-        }
+        aod_show_current(1, 1);      /* 当前页面重播乱码 */
     }
     else if (evt == EVT_LONG_OK)
     {
@@ -1061,24 +1058,22 @@ static void ui_task(void *arg)
                 /* 息屏时钟: 只更新 AOD 画面, 不走普通主界面刷新 */
                 if (aod_mode == 0)
                 {
-                    if (now < aod_glitch_until)
+                    if (INS_Decoding())   /* 时钟乱码破译/逐字显示中 */
                     {
-                        if (now - aod_last_draw >= INS_SCR_DELAY_MS)
+                        INS_Tick();
+                    }
+                    else
+                    {
+                        if (aod_saved_font != 0xFF)
+                        {
+                            INS_SetFont(aod_saved_font);
+                            aod_saved_font = 0xFF;
+                        }
+                        if (now - aod_last_draw >= 1000)
                         {
                             aod_last_draw = now;
-                            aod_clock_draw(1);
+                            aod_clock_draw();
                         }
-                    }
-                    else if (aod_glitch_until)   /* 乱码结束: 立即恢复真实时钟 */
-                    {
-                        aod_glitch_until = 0;
-                        aod_last_draw = now;
-                        aod_clock_draw(0);
-                    }
-                    else if (now - aod_last_draw >= 1000)
-                    {
-                        aod_last_draw = now;
-                        aod_clock_draw(0);
                     }
                 }
                 else
@@ -1233,7 +1228,7 @@ static void ui_task(void *arg)
                     {
                         aod_active = 1;
                         aod_mode = 0;
-                        aod_show_current(0);
+                        aod_show_current(0, 0);
                         PWR_Activity(now);
                     }
                     else
