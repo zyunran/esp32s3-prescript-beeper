@@ -138,8 +138,7 @@ python -m esptool --chip esp32s3 -p COM9 -b 460800 --before default_reset --afte
 
  ### 备注
 
-0. **版本号修改方式**：编辑项目根目录 `version.txt`，改成例如 `v1.12`，重新 `idf.py build` 即可；不要改代码宏。
-1. **本项目目前只用面包板与模块实现以上功能但是不完善,正在更新pcb版**
+1. **本项目Pcb版已实现,但还没有3d外壳适配**
 
 >  **隐私**：本仓库不内置任何个人 WiFi SSID/密码或天气 API Key——首次须经配置页填写（或写入设备 NVS `net` 命名空间），源码默认留空。
 
