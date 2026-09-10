@@ -2,31 +2,22 @@
 #define __UI_H
 
 #include <stdint.h>
-#include "color.h"   /* 只需颜色宏, 不再拖入驱动头 */
+#include "color.h"
 
-/* ================= 全局界面主题色(运行时可改, 默认护眼"柔和绿") =================
- * 主界面/子菜单/抽卡/破译共用背景与文字色; WEB 配置页可改并写入 NVS.
- * 声明收编于 UI(语义归属), 定义体暂在 LCD 组件 lcd.c. */
-extern uint16_t UI_COLOR_BG;    /* 背景 */
-extern uint16_t UI_COLOR_MENU;  /* 菜单文字 */
-extern uint16_t UI_COLOR_FRAME; /* 选中项线框 */
-extern uint16_t UI_COLOR_ICON;  /* 指令图标 */
-extern uint16_t UI_COLOR_TIME;  /* 左侧时钟 */
-extern uint16_t UI_COLOR_DATE;  /* 左上角日期 */        /* 颜色宏(WHITE/YELLOW/LBBLUE...) */
+/* 运行时主题色(唯一声明处; 定义在 ui.c, WEB 改后写 NVS) */
+extern uint16_t UI_COLOR_BG;
+extern uint16_t UI_COLOR_MENU;
+extern uint16_t UI_COLOR_FRAME;
+extern uint16_t UI_COLOR_ICON;
+extern uint16_t UI_COLOR_TIME;
+extern uint16_t UI_COLOR_DATE;
 
-/* 按键 GPIO 布局(改这里即可调整按键映射):
- *   UI_KEY_UP   = 内容上移
- *   UI_KEY_DOWN = 内容下移
- *   UI_KEY_OK   = 确认当前功能
- * PCB 版实测接线: 上=GPIO5 / 下=GPIO6 / 确认=GPIO4(旧板为 上4/下6/确认5);
- * 若换板只改这三个值, 轮询/待机/长按连发逻辑全部跟随本定义 */
+/* 按键 GPIO: 上=5 下=6 确认=4(PCB 版). 换板只改这三个宏 */
 #define UI_KEY_UP      5
 #define UI_KEY_DOWN    6
 #define UI_KEY_OK      4
 
-/* ================= 界面可调参数(改这里即可调整界面) ================= */
-/* 界面主题色(UI_COLOR_BG/MENU/...)已定义于 lcd.h, 全工程共用 */
-/* 左侧指令图标 */
+/* 布局宏(左侧图标 / 右侧菜单 / 动画) */
 #define UI_ICON_X       110                 /* 图标 x: 全屏水平居中 (284-64)/2 */
 #define UI_ICON_Y       6                   /* 图标 y: 垂直居中 (76-64)/2 */
 /* 布局 */

@@ -4,16 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* CLOUD 组件: OneNET Studio(物联网平台) MQTT 接入(v1.14)
- * 三链路:
- *   上行属性: battery/rssi/version/alarm_cnt 连上即报 + 60s 周期上报
- *   上行事件: 闹钟到点/待办提醒/每日神谕 -> OneNET 事件记录
- *   下行指令: 平台服务 display_cmd -> 屏幕乱码破译显示(与网页下发指令同路径)
- * 配置: NVS "cloud"(on/pid/name/key), 网页「云端」卡片(/api/cloud)配置; 「远程在线」默认关,
- *   开启后 CLOUD_KeepAlive() 阻止浅睡眠断网(云端持续在线, 待机耗电相应增加)
- * 接入: mqtt://mqtts.heclouds.com:1883, clientId=设备名, username=产品ID,
- *   password=安全鉴权 token(cloud_token.c, HMAC-SHA256; 与 tools/onenet_token.py 同规则);
- *   topic 拼接/OneJSON 组包/下行解析收拢在 cloud_onenet.c 平台适配层, 换平台只改该层 */
+/* CLOUD: OneNET Studio MQTT。属性/事件上行,display_cmd 下行。默认「远程在线」关。 */
 
 #define CLOUD_PID_MAX   40   /* 产品ID(OneNET 实际 8~10 位, 留余量) */
 #define CLOUD_NAME_MAX  48   /* 设备名 */

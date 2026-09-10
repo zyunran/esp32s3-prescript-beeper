@@ -1,5 +1,4 @@
-/* BUZZER 组件: 自 INSTRUCTION 拆出(v1.03 后)
- * 原实现见 INSTRUCTION.c 历史; 全部状态与调度原样迁移, 仅更名 bz_ 前缀 */
+/* BUZZER: GPIO15 有源蜂鸣。Beep 排程,Tick 推进(ui_task/httpd 可并发,volatile)。 */
 #include "BUZZER.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"

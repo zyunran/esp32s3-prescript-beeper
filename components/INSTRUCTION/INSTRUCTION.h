@@ -2,9 +2,9 @@
 #define __INSTRUCTION_H
 
 #include <stdint.h>
-#include "color.h"   /* 只需颜色宏, 不再拖入驱动头 */        /* 颜色宏(RED/BLUE...) */
+#include "color.h"
 
-/* 运行期指令库/使用者上限(与 WEB 输入校验共用) */
+/* INSTRUCTION: 破译参数与指令库 API。上限与 WEB 共用。 */
 #define INS_PRESET_MAX      40
 #define INS_PRESET_LEN      110
 #define INS_USER_NAME_MAX   24  /* 当前使用者名最大字节数(与使用者列表上限 UI_USER_NAME_MAX 对齐) */

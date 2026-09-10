@@ -4,10 +4,7 @@
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"   /* TaskHandle_t */
 
-/* POWER 组件: 屏幕亮灭 / 活动时刻 / 浅睡眠待机引擎
- * (自 main.c 拆出. 单写者约定不变: 本组件只操作背光开关 lcd_on/lcd_off, 不绘制内容)
- * 待机原理见 POWER.c 头注(定时器片睡眠, GPIO 唤醒在本板被硬件拒绝).
- * 注: 扣屏静音/抬腕亮屏已删除 —— 省电完全由「息屏超时→待机浅睡眠」承担. */
+/* POWER: 背光/活动/浅睡 API。 */
 
 typedef struct {
     TaskHandle_t input_task;        /* 待机期间挂起/恢复的轮询任务句柄(可 NULL) */

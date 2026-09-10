@@ -3,12 +3,7 @@
 
 #include <stdint.h>
 
-/* ALARM 组件: 闹钟(TTL协议"过去"), 最多 16 段, 每天重复 / 按星期 / 一次性(时:分)
- * 流程: 二级菜单(添加闹钟/当前闹钟/退出) -> 添加: 设定屏(时分+重复三栏竖向滑动+光标),
- *   确认/重试/退出 为设定屏内嵌菜单; 当前闹钟: 列表(OK开关/长按OK删除)
- * 触发: UI 主任务每秒查 ALM_Check(待机浅睡眠 tick 中也会查), 到点且开启且当日未触发则返回 1(内部标记当日已触发),
- *   一次性模式到时自动关闭; 调用方在主界面空闲时 ALM_Show 显示闹钟专属指令(乱码破译)
- * 数据: NVS 持久化(namespace "alarm"); 由 UI 主任务驱动 Enter/Key/Tick */
+/* ALARM: 闹钟 API。NVS "alarm";主任务/待机 tick 驱动。 */
 
 void ALM_Init(void);                                       /* 加载 NVS 闹钟 */
 void ALM_Enter(void);                                      /* 进入闹钟二级菜单 */

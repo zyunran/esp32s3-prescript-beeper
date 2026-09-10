@@ -1,9 +1,4 @@
-/* SPI 组件: SPI2 主机总线初始化 + 批量发送(供 LCD 用).
- * MISO 不接(屏只写); 具体时钟(60MHz)/设备句柄在 lcd.c lcd_init 中添加.
- * spi2_write_data 用轮询模式发送(POLLING, 不经队列), 单次长度受 max_transfer_sz 限制.
- * max_transfer_sz = 4096: 与 fb_blit/lcd_clear 的实际分块大小一致(整屏 43KB 也是分块发的),
- * 避免让驱动为整屏帧长预留过大内部 DMA 缓冲.
- * 单写者约定: 全部写屏调用来自 ui_task(见 lcd.h), 总线无需额外互斥. */
+/* SPI: SPI2 批量发送(轮询,≤4096B)。时钟/设备句柄在 lcd_init。单写者=ui_task。 */
 #define SPI2_MAX_TRANSFER  4096
 #include "spi.h"
 #include <string.h>

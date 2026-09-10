@@ -4,10 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* LOOM 组件: 「织机」彩蛋(v1.03 起从主菜单隐藏, 改为手势解锁的独立组件)
- * 入口: 主界面 Konami 序列 —— 摇动(上上 下下 左右左右)或按键(下下上上+OK·LNG·OK·LNG, 因摇U/D事件与键反向)
- *       (上上 下下 确认 长按确认 确认 长按确认)均可; 由 main 在主界面态喂 LOOM_Konami.
- * 功能: 纺织时间(made in heaven 时间加速) / 纺织记忆(全系统白框滤镜) / 平衡(六轴姿态, v1.16 自设置移入) */
+/* LOOM: 织机彩蛋 API。 */
 
 /* 动作码(LOOM_Key 返回, 导航由调用方 main 执行 —— LCD 单写者约定) */
 #define LOOM_KEY_NONE    0

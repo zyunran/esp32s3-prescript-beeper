@@ -1,9 +1,6 @@
-/* CLOUD 组件主体: 配置(NVS "cloud") + cloud_task 会话管理
- * 会话策略: WiFi 已连且「远程在线」开 -> 拉起 esp-mqtt 连 OneNET(鉴权 token 每次启动现算);
- *   断线由 esp-mqtt 自动重连(10s); 关闭/改配置 -> 停客户端, 下一轮按新配置重建。
- * 数据流: 属性连上即先报一次, 之后 60s 周期上报; 事件队列逐条上报(未启用/队满即丢, 不补发);
- *   下行 display_cmd 在 mqtt 事件回调里解析 -> 单缓冲暂存, ui_task 经 CLOUD_TakeCmd 取走显示
- *   (与网页下发指令同一展示路径, LCD 单写者纪律不变) */
+/* CLOUD: NVS "cloud" 配置 + cloud_task。远程在线开且 WiFi 通则连 OneNET;
+ * 下行 display_cmd 单缓冲,ui_task 经 CLOUD_TakeCmd 显示。
+ */
 #include "CLOUD.h"
 #include "cloud_priv.h"
 #include "esp_log.h"

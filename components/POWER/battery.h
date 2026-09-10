@@ -3,12 +3,7 @@
 
 #include <stdint.h>
 
-/* BATTERY 组件: 1S 锂电电压 -> 电量百分比(ADC1 读分压)
- *  - 引脚: GPIO1 = ADC1_CH0(改 BAT_ADC_CH 即可换引脚)
- *  - 分压: BAT_DIV = 分压比(电池V = ADC_V × 分压比; 1:1 分压即 2)
- *  - 未接电池/纯USB 时返回 255, UI 画空电池框
- *  - 适配 5V 充放电模块: 电量必须测电池端(B+/BAT+), 不能测模块 5V 输出(5V 恒定会永远显示满电)
- * 参考: 1S LiPo 2.9V(0%, 模块过放保护) ~ 4.2V(100%, 充电截止) */
+/* BATTERY: 1S 锂电电压→电量%。GPIO1 ADC1_CH0。未接=255。 */
 
 #define BAT_ADC_UNIT ADC_UNIT_1
 #define BAT_ADC_CH   ADC_CHANNEL_0      /* GPIO1 */

@@ -1,6 +1,4 @@
-/* SOUND 组件: MAX98357A I2S 功放(16bit 单声道 16000Hz)
- *  - I2S_TX 标准(Philips)模式, 后台任务+信号量, SOUND_Play 非阻塞
- *  - 无数据时 auto_clear 输出静音, 防止喇叭底噪 */
+/* SOUND: MAX98357A I2S 16kHz mono。SOUND_Play 非阻塞;SD=13 低=关断。 */
 #include "SOUND.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"

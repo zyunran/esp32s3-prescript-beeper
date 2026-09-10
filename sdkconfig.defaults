@@ -1,19 +1,19 @@
-# 目标芯片: ESP32-S3(必须显式声明! 默认 IDF 目标是 esp32, 拷贝/全新 clone 不自带 sdkconfig 时会被编成 esp32)
+# 芯片必须显式: 否则全新 clone 会编成 esp32
 CONFIG_IDF_TARGET="esp32s3"
 
-# 分区表: 自定义(partitions.csv, app 4MB). 详见 sdkconfig
+# 自定义分区: ota_0/ota_1 各 2MB
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# 闪存 16MB(分区表 4MB app 超过默认 2MB: 全新 clone 必须显式声明, 否则生成分区表报错)
+# 16MB 闪存 + DIO/80MHz
 CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
-# SNTP: 3 个服务器槽位(国内 NTP 可靠), 校时失败 10 分钟重试(默认 1 小时太久)
+# SNTP: 3 服务器; 校时失败 10 分钟重试
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_LWIP_SNTP_UPDATE_DELAY=600000
 
-# OTA: 双分区 + 启动回滚
+# OTA 回滚
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n

@@ -1,8 +1,4 @@
-/* ota_drv.c - OTA 升级驱动
- *  - 下载地址与 SHA256 仅存 NVS "ota"，源码不硬编码任何 URL/凭证（隐私）
- *  - 后台任务流式下载到备用 OTA 分区，支持 HTTPS/重定向
- *  - 校验通过后设置启动分区并自动重启
- */
+/* OTA: URL/SHA256 在 NVS "ota"。后台流式写备用分区,校验后切换分区重启。 */
 #include "ota_drv.h"
 #include "nvs_flash.h"
 #include "esp_log.h"

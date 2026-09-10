@@ -8,12 +8,7 @@
 extern "C" {
 #endif
 
-/* OTA 组件:
- *  - 固件地址和 SHA256 只保存在 NVS "ota" 命名空间，源码不内置任何下载地址/凭证
- *  - 使用 esp_http_client 流式下载到备用 OTA 分区，支持 HTTPS + 自动重定向
- *  - 下载完成后按需校验 SHA256，通过后切启动分区并自动重启
- *  - 启动后请调用 ota_drv_mark_valid() 标记固件可用，失败自动回滚
- */
+/* OTA: 无内置 URL。可空 SHA 则跳过校验(后续应强制)。启动后 mark_valid 防误回滚。 */
 
 #define OTA_URL_MAX    256
 #define OTA_SHA256_MAX 65

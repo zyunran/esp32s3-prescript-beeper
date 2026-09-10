@@ -1,12 +1,4 @@
-/* GACHA 组件: 抽卡界面(主菜单"观测"直接进入, 子菜单: 十连/单抽/拼点/图鉴/积分/退出)
- * 非阻塞状态机(由 RTOS 主任务驱动):
- *   - GC_MENU:   十连/单抽/拼点/图鉴/积分/退出 子菜单(复用 UI 通用子菜单)
- *   - GC_ANIM:   竖线从左到右扫过 10 个无色方框并逐个染成该抽稀有度色(时间戳驱动)
- *   - GC_VOICE:  金人格抽取语音打字机显示(时间戳驱动 + 按键翻页/加速)
- *   - GC_RESULT: 滚动列表, 上下键一次滑动一位, 确认回子菜单
- * 稀有度: 人格按官方灯级 ★1灰/★2红/★3金, EGO 统一金; 概率千分比可调
- * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrRect/UI_ScrGlyph/UI_ScrBlit)。
- */
+/* GACHA: 抽卡状态机(MENU/ANIM/VOICE/RESULT)。稀有度千分比可调。绘制走 UI_Scr*。 */
 #include "GACHA.h"
 #include "LCD.h"   /* 仅用 LCD_WIDTH/HEIGHT 屏幕几何宏(显式声明驱动依赖) */
 #include "UI.h"

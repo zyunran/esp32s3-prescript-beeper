@@ -1,4 +1,5 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
+# 16MB 闪存: ota_0/ota_1 各 2MB app，共 4MB 应用分区
 nvs,      data, nvs,     0x9000,   0x6000,
 phy_init, data, phy,     0xf000,   0x1000,
 otadata,  data, ota,     0x10000,  0x2000,

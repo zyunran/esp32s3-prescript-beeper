@@ -1,11 +1,4 @@
-/* DS1302 实时时钟组件: 3 线 bit-bang(GPIO2=CLK / GPIO14=DAT / GPIO21=RST/CE).
- * 协议要点(DS1302 数据手册, 非 I2C):
- *  - CE 高有效, 整个读写期间保持高, 结束拉低; DAT 为双向线
- *  - 命令字节 8 位 LSB 先发; 写数据 LSB 先发; 读数据 LSB 先收
- *  - 写: 数据在 SCLK 上升沿被 DS1302 锁存(主控在上升沿前把 DAT 摆好)
- *  - 读: 命令字节第 8 位下降沿后 DS1302 开始驱动 DAT, 主控在 SCLK 拉高前采样(数据已稳定)
- *  - 时间寄存器为 BCD; 突发读 0xBF 从秒起连读 8 字节, 突发写 0xBE 连写
- *  - 写前须清写保护(0x8E), 写秒时清 CH(bit7) 使振荡器启动 */
+/* DS1302: 3 线 bit-bang 非 I2C。CLK=2 DAT=14 CE=21。BCD,写前清 WP,写秒清 CH。 */
 #include "DS1302.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"

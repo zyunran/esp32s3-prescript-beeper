@@ -1,10 +1,4 @@
-/* MPU6050 六轴组件: 软件I2C + 六轴读写 + 互补滤波姿态 + 摇动方向检测.
- * 参考 STM32 work_watch 工程 Hardware/MPU6050.c(寄存器) + memu.c(互补滤波) 按 ESP32 移植.
- *  - I2C: 推挽 SCL + SDA 方向切换 bit-bang(SCL=39 / SDA=38, 约 100kHz)
- *  - 姿态: 陀螺积分 + 加速度 atan2 互补滤波(STM32 同款 a=0.9; 陀螺按 ±2000dps 正确标定)
- *  - 摇动(四向, 送入按键队列): 上摇/下摇 = 上下键(EVT_UP/DOWN); 左摇 = 确认(EVT_OK), 右摇 = 退出(EVT_LONG_OK)
- *    判定: 转腕型取三轴角速度最大者(横滚gx=上下, 俯仰gy/航向gz=左右), 平移型取动态加速度竖直/水平分量
- *    (安装/握持姿态不同方向可能反, 见 mpu_shake 互换说明) */
+/* MPU6050: 软 I2C(SCL39/SDA38) + 互补滤波 + 四向摇动→按键事件。方向以 PCB 实测为准。 */
 #include "MPU6050.h"
 #include "UI.h"
 #include "evt.h"

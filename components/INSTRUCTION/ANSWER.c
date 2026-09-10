@@ -1,8 +1,4 @@
-/* ANSWER 组件: 「询问」答案之书
- *  - 4 分类(回答/吃什么/喝什么/玩什么)子菜单, OK 抽答案, 乱码破译显示
- *  - 答案库 = 内置默认(代码内) + 用户自定义(NVS "ans"/"c0".."c3", 网页可增删)
- *  - 显示复用 INSTRUCTION 的 INS_Show 做"乱码破译"(INSTRUCTION 是基础设施, 直接依赖)
- *  - 非阻塞状态机: ANS_MENU(分类子菜单) / ANS_DRAW(已抽, 等按键再抽/回菜单) */
+/* ANSWER: 答案之书。4 分类 + NVS "ans";显示走 INS_Show。状态机由主任务驱动。 */
 #include "ANSWER.h"
 #include "UI.h"
 #include "INSTRUCTION.h"   /* INS_Show 破译显示答案 */

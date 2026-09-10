@@ -1,8 +1,4 @@
-/* LOOM 组件: 「织机」彩蛋(独立组件, 自主菜单隐藏)
- * - 纺织时间: 现实1秒=显示1小时, 时/分/秒/日同源一个连续时间不脱节
- * - 纺织记忆: 全系统白框滤镜(UI_BoxMode), 唯一出口=再进一次本菜单关闭
- * - Konami 解锁序列在主界面由 main 喂入: 摇上x2,摇下x2,左,右,左,右(U/D事件与键反向, 见 konami_seq)
- *   (左=EVT_OK 右=EVT_LONG_OK, 摇动手势与物理按键等价) */
+/* LOOM: 织机彩蛋。主界面 Konami 解锁;纺织时间/白框滤镜/平衡页。 */
 #include "LOOM.h"
 #include "UI.h"
 #include "esp_timer.h"

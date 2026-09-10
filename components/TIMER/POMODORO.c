@@ -1,5 +1,4 @@
-/* POMODORO 组件: 番茄钟(设定/工作/休息 三态 + 暂停)
- * 绘制走 UI_Scr* 帧缓冲接口(LCD 单写者: 仅 ui_task 调用), 秒变化才整屏重绘. */
+/* POMODORO: 番茄钟 SET/WORK/BREAK。ui_task 驱动;秒变才重绘。 */
 #include "POMODORO.h"
 #include "UI.h"
 #include "esp_timer.h"

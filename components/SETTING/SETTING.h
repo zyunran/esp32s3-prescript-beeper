@@ -3,8 +3,7 @@
 
 #include <stdint.h>
 
-/* 设置子菜单项索引(顺序=显示顺序; v1.16 按组重排: 声音->显示->推送->交互->工具;
- * 平衡自 v1.16 移入 织机 菜单) */
+/* SETTING: 设置枚举与读写 API。 */
 typedef enum {
     SET_IDX_VOL = 0,       /* 音量 */
     SET_IDX_BEEP,          /* 蜂鸣器开/关 */
@@ -20,11 +19,6 @@ typedef enum {
     SET_IDX_EXIT,          /* 退出 */
     SET_IDX_COUNT,         /* 含"退出"的项数 */
 } setting_idx_t;
-
-/* SETTING 组件: 设置(NVS 持久化) + 设置子菜单交互
- *  - 值: 熄屏时长/息屏时钟/音量/蜂鸣开关/摇动开关/光标样式
- *  - 副作用在修改时立即应用(蜂鸣开关/音量/摇动开关/陀螺仪互换)
- *  - 设置子菜单由 UI 主任务驱动: Enter 生成项 -> Select 处理选中 */
 
 void SET_Init(void);                       /* 加载 NVS 设置并应用副作用 */
 uint16_t SET_TimeoutSec(void);             /* 熄屏秒数(0=永不) */

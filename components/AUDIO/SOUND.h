@@ -3,10 +3,7 @@
 
 #include <stdint.h>
 
-/* SOUND 组件: MAX98357A I2S 功放播采样音频
- *  - 接线: GPIO16=BCLK  GPIO17=LRC  GPIO18=DIN  (SD=GPIO13, 固件控制低=关断)
- *  - 格式: 16bit 单声道 PCM, 采样率 16000Hz(与 tools/wav2c.py 转换一致)
- *  - 播放走独立后台任务, SOUND_Play 非阻塞 */
+/* SOUND: I2S 功放播放 API。 */
 
 void SOUND_Init(void);                          /* 初始化 I2S 输出 */
 void SOUND_SetVolume(uint8_t percent);          /* 音量 0~100(默认100), 播放时缩放 */

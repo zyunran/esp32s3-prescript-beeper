@@ -1,9 +1,7 @@
 #ifndef __COLOR_H
 #define __COLOR_H
 
-/* 公共颜色词汇(RGB565): 驱动(LCD)/框架(UI)/业务组件共用.
- * 独立成头的目的: 业务头文件不再被迫 #include "LCD.h"(驱动头),
- * 消除"为拿几个颜色宏而反向依赖驱动层"的分层违规. */
+/* RGB565 颜色宏与主题预设(COMMON,业务勿依赖 LCD 头拿颜色)。 */
 
 #define WHITE           0xFFFF      /* 白色 */
 #define BLACK           0x0000      /* 黑色 */
@@ -24,7 +22,6 @@
 #define LGRAYBLUE       0XA651      /* 浅灰蓝色(中间层颜色) */
 #define LBBLUE          0X2B12      /* 浅棕蓝色(选择条目的反色) */
 
-
 /* ================= 主题/界面调色板(默认护眼柔和绿, RGB565) ================= */
 #define THEME_BG        0x10C2   /* 背景 #141A14 深暖绿黑 */
 #define THEME_MENU      0xCF18   /* 菜单文字 #C8E0C0 淡绿白 */
@@ -42,7 +39,6 @@
 /* ================= 指令库颜色(与全局主题解耦) ================= */
 #define INS_DEFAULT_RED 0xE249   /* 普通破译真字默认清晰红 */
 #define INS_GARBLE_BLUE 0x651D   /* 未破译乱码亮钢蓝 */
-
 
 /* ================= 主题预设(设置里一键切换) ================= */
 #define THEME_PRESET_N   4

@@ -1,15 +1,6 @@
-/* RTOS 多任务架构:
- *  - input_task: GPIO 沿检测读按键 -> 事件队列(高优先级, 独立于界面)
- *  - ui_task:    收事件按界面状态机驱动, 并推进各功能(破译/抽卡/计时/神谕推送)
- *  - cloud_task: OneNET MQTT 会话(CLOUD 组件, 内部建), 属性/事件上报 + display_cmd 下发
- *  - 待机: 息屏后 ui_task 进浅睡眠(50ms tick 查按键/闹钟, STANDBY_TICK_US);
- *    路径1 完全按需联网: 唤醒不再自动重连 WiFi, 联网仅由 联网->连接网络 手动开启(会话内校时/天气);
- *    「远程在线」开启时 CLOUD_KeepAlive() 阻止待机断网, 云端持续在线
- * 功能已拆分为组件: UI(菜单/配置+LOOM彩蛋) / INSTRUCTION(破译+蜂鸣+答案) / GACHA(抽卡) / NET(联网天气)
- *   / AUDIO(蜂鸣+音频) / SETTING(设置+NVS+神谕) / TIMER(倒计时/番茄钟/闹钟) / POWER(电源+电量)
- *   / CLOUD(OneNET MQTT) / WEB(配置页) / OTA(双分区升级) / MPU6050(摇动) / DS1302(RTC) / COMMON(公共头)
- * 主菜单标题与子菜单项文字集中配置于 ui_menu_cfg(ui.c), 改那里即可改文字
- * (主菜单序: 神谕/TTL协议/待办/联网/观测/询问/使用者/设置; 联网含 云端开关与 OTA)
+/* 任务: input_task 按键→key_q; ui_task 状态机+绘制(唯一 LCD 写者); cloud 在 CLOUD 内建。
+ * 待机: 息屏浅睡 50ms tick; 按需联网,「远程在线」开则 CLOUD_KeepAlive 不断网。
+ * 菜单文案在 ui_menu_cfg(ui.c)。业务在 components 目录,本文件主要是状态机与 boot。
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

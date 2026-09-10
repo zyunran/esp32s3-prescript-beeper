@@ -1,8 +1,4 @@
-/* POWER 组件: 自 main.c 拆出(v1.03 后), 状态与行为原样迁移.
- * 待机浅睡眠: 本板 GPIO 唤醒触发硬件睡眠拒绝(ESP_ERR_SLEEP_REJECT, 实测),
- * 故用「定时器 tick 睡眠」: 每 50ms 睡一片, 醒来查按键/闹钟再睡;
- * 按键响应 ≤50ms; CPU 睡眠期占 >99%, 比全速运行省电数倍.
- * 白屏防护由宿主 lcd_sleep_hold 保证(睡眠期间 CS/RST/DC 保持高). */
+/* POWER: 息屏/活动/浅睡。本板 GPIO 唤醒被硬件拒,故 50ms 定时片睡;白屏靠 lcd_sleep_hold。 */
 #include "POWER.h"
 #include "LCD.h"
 #include "esp_timer.h"

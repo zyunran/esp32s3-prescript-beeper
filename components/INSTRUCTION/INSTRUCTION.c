@@ -1,9 +1,5 @@
-/* INSTRUCTION 组件: 指令乱码破译显示(蜂鸣器已拆至 BUZZER 组件)
- *  - 全屏显示一条指令文本: 先全乱码再逐字"破译"成真字
- *  - 支持 {#RRGGBB} 颜色 / {} 恢复默认色 / {RAND:min-max} 随机数 / {TIMER} 内联计时占位
- *  - 乱码全取 ASCII 且字符数≠真字; 已解码字带滑入位移, 小概率回退乱码
- *  - 解码期间不蜂鸣(语音进行音由扬声器播); 神喻/指令/闹钟/待办破译在结尾排程三连急促哔, 响完恰破译完
- * 绘制使用 UI 组件帧缓冲接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit/UI_RenderScreen)。
+/* INSTRUCTION: 全屏乱码破译。标签 {#RRGGBB} {} {RAND:min-max} {TIMER};{TODO} 前缀进待办。
+ * 蜂鸣在 BUZZER。绘制只走 UI_Scr*(ui_task 单写者)。
  */
 #include "INSTRUCTION.h"
 #include "BUZZER.h"

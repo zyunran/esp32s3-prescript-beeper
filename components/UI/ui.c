@@ -1,15 +1,5 @@
-/* UI 组件: 左侧指令图标 + 右侧滚动菜单(按键4/5/6)
- * 284×76 横屏, 像素坐标
- *   - 左侧 0..108: 状态栏(日期/网络/电量/时钟/天气); 指令图标居中 110..173(64×64)
- *   - 右侧 140..283: 滚动菜单, 3 个槽位, 中间槽为当前功能
- * 滚动模型(与需求一致): 按下"下"键, 整体内容向下移动一格(时间→中, 计时→下);
- *   环形循环, 3 项无限滑动。
- * 选中效果: 当前项左移一个汉字距离 + 主题色矩形线框(UI_CURSOR_COLOR, 带间距);
- *   取消选中时水平偏移缓动回退(可见动画)。
- * 动画: 全屏帧缓冲(双缓冲) + 原子批量刷新, 消除滑动黑屏/闪烁;
- *   项逐像素裁剪, 顶部/底部平滑滑出屏幕。
- * 本组件同时对外暴露帧缓冲绘制接口(UI_ScrClear/UI_ScrGlyph/UI_ScrBlit),
- * 供 INSTRUCTION 组件做全屏乱码破译显示。
+/* UI: 284×76 主界面(左状态/图标,右三槽菜单)+ 帧缓冲绘制 API(UI_Scr*),供破译/抽卡复用。
+ * 主题色 UI_COLOR_* 在此定义。双缓冲消除滑动闪烁。仅 ui_task 绘制。
  */
 #include "ui.h"
 #include "LCD.h"
@@ -21,8 +11,15 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ascii_1608 定义在 LCD 组件的 lcdfont.h(由 lcd.c 包含, 外部链接),
- * 此处只声明引用, 避免重复定义 */
+/* 运行时主题色: 唯一定义处(UI_COLOR_* 声明见 ui.h) */
+uint16_t UI_COLOR_BG    = THEME_BG;
+uint16_t UI_COLOR_MENU  = THEME_MENU;
+uint16_t UI_COLOR_FRAME = THEME_FRAME;
+uint16_t UI_COLOR_ICON  = THEME_ICON;
+uint16_t UI_COLOR_TIME  = THEME_TIME;
+uint16_t UI_COLOR_DATE  = THEME_DATE;
+
+/* ascii_1608 定义在 LCD 组件的 lcdfont.h(由 lcd.c 包含, 外部链接) */
 extern const unsigned char ascii_1608[][16];
 
 /* 文字像素宽(定义于通用菜单渲染节, 此处前置声明供 ScrText 等早段使用) */

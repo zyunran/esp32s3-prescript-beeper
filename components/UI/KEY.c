@@ -1,6 +1,4 @@
-/* KEY 组件: 按键 GPIO 初始化.
- * 上(5)/确认(4)/下(6) 三键, 输入+内部上拉(按下=低电平);
- * 按键的轮询/长按/连发逻辑在 main.c input_task, 本组件只负责引脚初始化. */
+/* KEY: 三键 GPIO 初始化(上5/OK4/下6,上拉)。轮询/长按在 main input_task。 */
 #include "KEY.h"
 #include "driver/gpio.h"
 

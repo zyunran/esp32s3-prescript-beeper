@@ -6,11 +6,7 @@
 /* 单条待办文本最大字节数(与 WEB 输入校验共用) */
 #define TODO_TEXT_MAX 60
 
-/* TODO 组件: 待办/指令日志(NVS "todo" 持久化)
- *  - 产生: 指令文本带 {TODO} 前缀时, 破译显示的同时自动存入待办(去重)
- *  - 设备: 主菜单"待办" -> 列表(OK 重新破译显示, 长按OK 标记 PASS/恢复, 末项"退出")
- *  - 网页: /api/todo 增/删/标记 PASS/清空(见 WEB 组件)
- * 流程: UI 主任务驱动 TODO_Enter/Key; 重显示由 main 调 INS_Show(本组件不依赖 INSTRUCTION) */
+/* TODO: 待办 API。NVS "todo"。 */
 
 void    TODO_Init(void);                       /* 加载 NVS 待办 */
 void    TODO_Enter(void);                      /* 进入待办列表 */

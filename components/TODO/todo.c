@@ -1,9 +1,4 @@
-/* TODO 组件: 待办/指令日志(主菜单"待办")
- *  - 产生: 指令文本 {TODO} 前缀(INSTRUCTION.INS_Show 解析时自动 TODO_Add, 去重)
- *  - 界面: 子菜单列表(块左对齐, 全文), OK 重新破译显示(由 main 调 INS_Show),
- *    长按OK 标记 PASS/恢复(加 "PASS " 前缀), 末项"退出"回主界面
- *  - 网页: GET /api/todo 列表; POST /api/todo {op:add/toggle/del/clear}
- * 数据 NVS "todo" 持久化; 绘制用 UI 组件子菜单接口. */
+/* TODO: 待办。{TODO} 自动入库;UI 列表 PASS/重显;网页 /api/todo。NVS "todo"。 */
 #include "TODO.h"
 #include "UI.h"
 #include "nvs_flash.h"

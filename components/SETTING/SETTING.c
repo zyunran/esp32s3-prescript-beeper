@@ -1,6 +1,4 @@
-/* SETTING 组件: 设置(NVS 持久化) + 设置子菜单交互
- * 值: 熄屏时长 / 息屏时钟 / 音量 / 蜂鸣开关 / 摇动翻页 / 光标样式
- * 子菜单项文字含当前值, 选中即修改并重绘 */
+/* SETTING: 设置项读写(NVS)+ 设置子菜单。 */
 #include "SETTING.h"
 #include "UI.h"
 #include "INSTRUCTION.h"
