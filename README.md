@@ -7,7 +7,6 @@
 **平台：** ESP32-S3 (WROOM-1 N16R8) · ESP-IDF v5.5.5 · FreeRTOS · C  
 **闪存：** 16MB · OTA 双分区 ota_0/ota_1 各 2MB · 版本见 `version.txt`
 
-[English](README_EN.md)
 
 ---
 
